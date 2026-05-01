@@ -42,3 +42,5 @@ app-example
 /ios
 /android
 .github/instructions/wmt-copilot.instructions.md
+/design
+/.claude

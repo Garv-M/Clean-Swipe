@@ -1,41 +1,43 @@
-/**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
- */
-
 import { Platform } from 'react-native';
 
-const tintColorLight = '#0a7ea4';
-const tintColorDark = '#fff';
-
+// ── Design-system palette ──────────────────────────────────────────────────
 export const Colors = {
-  light: {
-    text: '#11181C',
-    background: '#fff',
-    tint: tintColorLight,
-    icon: '#687076',
-    tabIconDefault: '#687076',
-    tabIconSelected: tintColorLight,
-  },
-  dark: {
-    text: '#ECEDEE',
-    background: '#151718',
-    tint: tintColorDark,
-    icon: '#9BA1A6',
-    tabIconDefault: '#9BA1A6',
-    tabIconSelected: tintColorDark,
-  },
-};
+  primary: '#F97316',           // orange
+  success: '#22C55E',           // green
+  info: '#3B82F6',              // blue
+  destructive: '#EF4444',       // red
+  background: '#1F2937',        // dark slate
+  cardFrom: '#283548',
+  cardTo: '#232f3e',
+  textPrimary: '#FFFFFF',
+  textSecondary: 'rgba(255,255,255,0.45)',
+  textTertiary: 'rgba(255,255,255,0.4)',
+  border: 'rgba(255,255,255,0.08)',
+} as const;
 
+// ── Legacy palette kept for useThemeColor / ThemedText / ThemedView ────────
+// The app is dark-only; both "light" and "dark" slots map to the same values
+// so existing themed components continue to work without modification.
+const legacyPalette = {
+  text: '#FFFFFF',
+  background: '#1F2937',
+  tint: '#F97316',
+  icon: '#F97316',
+  tabIconDefault: 'rgba(255,255,255,0.45)',
+  tabIconSelected: '#F97316',
+} as const;
+
+export const LegacyColors = {
+  light: legacyPalette,
+  dark: legacyPalette,
+} as const;
+
+// ── Typography ────────────────────────────────────────────────────────────
 export const Fonts = Platform.select({
   ios: {
-    /** iOS `UIFontDescriptorSystemDesignDefault` */
     sans: 'system-ui',
-    /** iOS `UIFontDescriptorSystemDesignSerif` */
     serif: 'ui-serif',
-    /** iOS `UIFontDescriptorSystemDesignRounded` */
     rounded: 'ui-rounded',
-    /** iOS `UIFontDescriptorSystemDesignMonospaced` */
     mono: 'ui-monospace',
   },
   default: {

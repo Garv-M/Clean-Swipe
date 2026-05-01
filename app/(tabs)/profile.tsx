@@ -1,15 +1,14 @@
-import { Card } from '@/components/ui/card';
 import { Text } from '@/components/ui/text';
 import { Colors } from '@/constants/theme';
 import { StyleSheet, View } from 'react-native';
 
-export default function HomeScreen() {
+export default function ProfileScreen() {
   return (
     <View style={styles.container}>
-      <Text variant="title">Clean Swipe</Text>
-      <Card style={styles.card}>
-        <Text variant="body">Your sessions will appear here</Text>
-      </Card>
+      <Text variant="title">Profile</Text>
+      <Text variant="body" style={styles.sub}>
+        Your account details will appear here
+      </Text>
     </View>
   );
 }
@@ -18,10 +17,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
-    padding: 20,
-    paddingTop: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
   },
-  card: {
-    marginTop: 16,
+  sub: {
+    color: Colors.textSecondary,
   },
 });
