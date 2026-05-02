@@ -45,6 +45,14 @@ function detectSource(group: Asset[]): string {
   return 'auto';
 }
 
+function averageLocation(group: Asset[]): { lat: number; lng: number } | undefined {
+  const geoAssets = group.filter((a) => a.location != null);
+  if (geoAssets.length === 0) return undefined;
+  const lat = geoAssets.reduce((s, a) => s + a.location!.lat, 0) / geoAssets.length;
+  const lng = geoAssets.reduce((s, a) => s + a.location!.lng, 0) / geoAssets.length;
+  return { lat, lng };
+}
+
 export function clusterAssets(assets: Asset[]): EventCluster[] {
   if (assets.length === 0) return [];
 
@@ -92,7 +100,7 @@ export function clusterAssets(assets: Asset[]): EventCluster[] {
         assetCount: g.length,
         estimatedBytes: g.reduce((sum, a) => sum + (a.bytes ?? 3_000_000), 0),
         assetIds: g.map((a) => a.id),
-        location: g.find((a) => a.location != null)?.location,
+        location: averageLocation(g),
         source: source === 'auto' ? undefined : source,
       } satisfies EventCluster;
     });
