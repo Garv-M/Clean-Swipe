@@ -116,13 +116,59 @@ function WelcomeStep({ onComplete }: WelcomeStepProps) {
   );
 }
 
-// ─── PermissionsStep (stub) ───────────────────────────────────────────────────
+// ─── PermissionsStep ─────────────────────────────────────────────────────────
+
+type PermState = 'idle' | 'requesting' | 'denied';
 
 function PermissionsStep({ onGranted }: { onGranted: () => void }) {
+  const insets = useSafeAreaInsets();
+  const [state, setState] = useState<PermState>('idle');
+
+  const handleRequest = async () => {
+    setState('requesting');
+    const granted = await requestPermissions();
+    if (granted) {
+      onGranted();
+    } else {
+      setState('denied');
+    }
+  };
+
   return (
-    <View style={styles.container}>
-      <Text variant="title">Permissions placeholder</Text>
-      <Button label="Skip (dev)" onPress={onGranted} />
+    <View
+      style={[
+        styles.container,
+        styles.centered,
+        { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 32 },
+      ]}>
+      <View style={styles.permContent}>
+        <Text style={styles.cardIcon}>📷</Text>
+        <Text variant="title" style={styles.permHeadline}>
+          {state === 'denied' ? 'Full access needed' : 'We need your photos to get started'}
+        </Text>
+        <Text variant="body" style={styles.permBody}>
+          {state === 'denied'
+            ? 'Full access is needed to show your photos for review. Tap below to open Settings.'
+            : 'We need access to show your photos for review. We never upload anything.'}
+        </Text>
+      </View>
+      <View style={styles.permActions}>
+        {state === 'denied' ? (
+          <Button
+            label="Open Settings"
+            variant="secondary"
+            onPress={() => Linking.openSettings()}
+            style={styles.fullWidthBtn}
+          />
+        ) : (
+          <Button
+            label="Allow Access"
+            onPress={handleRequest}
+            disabled={state === 'requesting'}
+            style={styles.fullWidthBtn}
+          />
+        )}
+      </View>
     </View>
   );
 }
@@ -223,5 +269,26 @@ const styles = StyleSheet.create({
   },
   fullWidthBtn: {
     width: '100%',
+  },
+  centered: {
+    justifyContent: 'space-between',
+  },
+  permContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 40,
+  },
+  permHeadline: {
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  permBody: {
+    textAlign: 'center',
+    color: Colors.textSecondary,
+    lineHeight: 22,
+  },
+  permActions: {
+    paddingHorizontal: 24,
   },
 });
