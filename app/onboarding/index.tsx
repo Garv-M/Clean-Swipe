@@ -177,13 +177,132 @@ function PermissionsStep({ onGranted }: { onGranted: () => void }) {
   );
 }
 
-// ─── ScanStep (stub) ─────────────────────────────────────────────────────────
+// ─── ScanStep ────────────────────────────────────────────────────────────────
+
+const STATUS_MESSAGES = [
+  'Analyzing your library...',
+  'Extracting GPS data...',
+  'Grouping into sessions...',
+  'Almost ready...',
+];
+const MIN_DISPLAY_MS = 2500;
 
 function ScanStep({ onComplete }: { onComplete: () => void }) {
+  const insets = useSafeAreaInsets();
+  const setClusters = useClusterStore((s) => s.setClusters);
+  const setScanning = useClusterStore((s) => s.setScanning);
+
+  const [totalScanned, setTotalScanned] = useState(0);
+  const [tripsFound, setTripsFound] = useState(0);
+  const [screenshotsFound, setScreenshotsFound] = useState(0);
+  const [gbToReview, setGbToReview] = useState(0);
+  const [sessionCount, setSessionCount] = useState(0);
+  const [statusIdx, setStatusIdx] = useState(0);
+  const [scanDone, setScanDone] = useState(false);
+
+  useEffect(() => {
+    const startTime = Date.now();
+    let cancelled = false;
+
+    const statusTimer = setInterval(() => {
+      if (!cancelled) setStatusIdx((i) => Math.min(i + 1, STATUS_MESSAGES.length - 1));
+    }, 700);
+
+    const run = async () => {
+      setScanning(true);
+      let cursor: string | undefined;
+      const allAssets: Asset[] = [];
+      let screenshots = 0;
+      let totalBytes = 0;
+
+      do {
+        const page = await fetchAssetsPage({ after: cursor, first: 50 });
+        if (cancelled) return;
+        allAssets.push(...page.assets);
+        screenshots += page.assets.filter((a) => a.filename.startsWith('Screenshot')).length;
+        totalBytes += page.assets.reduce((s, a) => s + (a.bytes ?? 3_000_000), 0);
+        cursor = page.endCursor;
+        setTotalScanned(allAssets.length);
+        setScreenshotsFound(screenshots);
+        setGbToReview(Math.round((totalBytes / 1e9) * 10) / 10);
+      } while (cursor);
+
+      const clusters = clusterAssets(allAssets);
+      setClusters(clusters);
+
+      const trips = clusters.filter((c) => c.source == null).length;
+      setTripsFound(trips);
+      setSessionCount(clusters.length);
+
+      const elapsed = Date.now() - startTime;
+      const delay = Math.max(0, MIN_DISPLAY_MS - elapsed);
+      setTimeout(() => {
+        if (!cancelled) setScanDone(true);
+      }, delay);
+    };
+
+    run()
+      .catch(() => {
+        if (!cancelled) setScanDone(true);
+      })
+      .finally(() => clearInterval(statusTimer));
+
+    return () => {
+      cancelled = true;
+      clearInterval(statusTimer);
+    };
+  }, []);
+
   return (
-    <View style={styles.container}>
-      <Text variant="title">Scan placeholder</Text>
-      <Button label="Skip (dev)" onPress={onComplete} />
+    <View
+      style={[
+        styles.container,
+        styles.centered,
+        { paddingTop: insets.top + 60, paddingBottom: insets.bottom + 32 },
+      ]}>
+      <View style={styles.scanContent}>
+        <Text style={styles.scanBigNumber}>{totalScanned.toLocaleString()}</Text>
+        {scanDone ? (
+          <Text variant="body" style={styles.scanReveal}>
+            photos — organised into {sessionCount} sessions for you
+          </Text>
+        ) : (
+          <Text variant="label" style={styles.scanLabel}>
+            photos scanned
+          </Text>
+        )}
+
+        <View style={styles.scanTiles}>
+          <View style={styles.scanTile}>
+            <Text style={[styles.scanTileNum, { color: Colors.success }]}>{tripsFound}</Text>
+            <Text variant="caption" style={styles.scanTileLabel}>
+              trips found
+            </Text>
+          </View>
+          <View style={styles.scanTile}>
+            <Text style={[styles.scanTileNum, { color: Colors.info }]}>{screenshotsFound}</Text>
+            <Text variant="caption" style={styles.scanTileLabel}>
+              screenshots
+            </Text>
+          </View>
+          <View style={styles.scanTile}>
+            <Text style={[styles.scanTileNum, { color: Colors.primary }]}>{gbToReview} GB</Text>
+            <Text variant="caption" style={styles.scanTileLabel}>
+              to review
+            </Text>
+          </View>
+        </View>
+
+        {!scanDone && (
+          <Text variant="label" style={styles.scanStatus}>
+            {STATUS_MESSAGES[statusIdx]}
+          </Text>
+        )}
+      </View>
+
+      {scanDone && (
+        <Button label="Let's Go" onPress={onComplete} style={styles.scanCta} />
+      )}
     </View>
   );
 }
@@ -294,5 +413,58 @@ const styles = StyleSheet.create({
   },
   permActions: {
     paddingHorizontal: 24,
+  },
+  scanContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  scanBigNumber: {
+    fontSize: 56,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+    fontVariant: ['tabular-nums'],
+  },
+  scanLabel: {
+    marginTop: 4,
+    marginBottom: 32,
+  },
+  scanReveal: {
+    textAlign: 'center',
+    color: Colors.textSecondary,
+    marginTop: 4,
+    marginBottom: 32,
+    paddingHorizontal: 16,
+  },
+  scanTiles: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 24,
+  },
+  scanTile: {
+    flex: 1,
+    backgroundColor: Colors.cardFrom,
+    borderRadius: 12,
+    padding: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  scanTileNum: {
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  scanTileLabel: {
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  scanStatus: {
+    color: Colors.textSecondary,
+    marginTop: 8,
+  },
+  scanCta: {
+    marginHorizontal: 24,
+    width: undefined,
   },
 });
