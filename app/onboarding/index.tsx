@@ -1,22 +1,22 @@
+import { Button } from '@/components/ui/button';
+import { Text } from '@/components/ui/text';
+import { Colors } from '@/constants/theme';
+import { clusterAssets } from '@/services/clustering';
+import { fetchAssetsPage, requestPermissions } from '@/services/mediaLibrary';
+import { useClusterStore } from '@/store/cluster';
+import { useSettingsStore } from '@/store/settings';
+import type { Asset } from '@/types';
+import { router } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Dimensions, Linking, StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
+    runOnJS,
+    useAnimatedStyle,
+    useSharedValue,
+    withSpring,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
-import { Button } from '@/components/ui/button';
-import { Text } from '@/components/ui/text';
-import { Colors } from '@/constants/theme';
-import { useSettingsStore } from '@/store/settings';
-import { useClusterStore } from '@/store/cluster';
-import { requestPermissions, fetchAssetsPage } from '@/services/mediaLibrary';
-import { clusterAssets } from '@/services/clustering';
-import type { Asset } from '@/types';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
