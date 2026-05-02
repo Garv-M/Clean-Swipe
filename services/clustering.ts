@@ -25,16 +25,20 @@ function generateId(): string {
 function formatDateRange(from: number, to: number): string {
   const s = new Date(from);
   const e = new Date(to);
-  const month = s.toLocaleString('en', { month: 'long' });
-  const year = s.getFullYear();
+  const startMonth = s.toLocaleString('en', { month: 'long' });
+  const startYear = s.getFullYear();
   if (s.toDateString() === e.toDateString()) {
-    return `${month} ${s.getDate()}, ${year}`;
-  }
-  if (s.getMonth() === e.getMonth() && s.getFullYear() === e.getFullYear()) {
-    return `${month} ${s.getDate()}–${e.getDate()}, ${year}`;
+    return `${startMonth} ${s.getDate()}, ${startYear}`;
   }
   const endMonth = e.toLocaleString('en', { month: 'long' });
-  return `${month} ${s.getDate()} – ${endMonth} ${e.getDate()}, ${year}`;
+  const endYear = e.getFullYear();
+  if (s.getMonth() === e.getMonth() && startYear === endYear) {
+    return `${startMonth} ${s.getDate()}–${e.getDate()}, ${startYear}`;
+  }
+  if (startYear === endYear) {
+    return `${startMonth} ${s.getDate()} – ${endMonth} ${e.getDate()}, ${startYear}`;
+  }
+  return `${startMonth} ${s.getDate()}, ${startYear} – ${endMonth} ${e.getDate()}, ${endYear}`;
 }
 
 function detectSource(group: Asset[]): string {
@@ -87,9 +91,8 @@ export function clusterAssets(assets: Asset[]): EventCluster[] {
   return groups
     .filter((g) => g.length >= MIN_CLUSTER_SIZE)
     .map((g) => {
-      const timestamps = g.map((a) => a.createdAt);
-      const from = Math.min(...timestamps);
-      const to = Math.max(...timestamps);
+      const from = g[g.length - 1].createdAt;
+      const to = g[0].createdAt;
       const source = detectSource(g);
       const label = source !== 'auto' ? source : 'Photos';
 
