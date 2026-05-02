@@ -203,6 +203,7 @@ function ScanStep({ onComplete }: { onComplete: () => void }) {
   useEffect(() => {
     const startTime = Date.now();
     let cancelled = false;
+    let displayTimer: ReturnType<typeof setTimeout> | undefined;
 
     const statusTimer = setInterval(() => {
       if (!cancelled) setStatusIdx((i) => Math.min(i + 1, STATUS_MESSAGES.length - 1));
@@ -227,6 +228,8 @@ function ScanStep({ onComplete }: { onComplete: () => void }) {
         setGbToReview(Math.round((totalBytes / 1e9) * 10) / 10);
       } while (cursor);
 
+      if (cancelled) return;
+
       const clusters = clusterAssets(allAssets);
       setClusters(clusters);
 
@@ -236,20 +239,24 @@ function ScanStep({ onComplete }: { onComplete: () => void }) {
 
       const elapsed = Date.now() - startTime;
       const delay = Math.max(0, MIN_DISPLAY_MS - elapsed);
-      setTimeout(() => {
+      displayTimer = setTimeout(() => {
         if (!cancelled) setScanDone(true);
       }, delay);
     };
 
     run()
       .catch(() => {
-        if (!cancelled) setScanDone(true);
+        if (!cancelled) {
+          setScanning(false);
+          setScanDone(true);
+        }
       })
       .finally(() => clearInterval(statusTimer));
 
     return () => {
       cancelled = true;
       clearInterval(statusTimer);
+      if (displayTimer !== undefined) clearTimeout(displayTimer);
     };
   }, []);
 
