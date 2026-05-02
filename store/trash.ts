@@ -48,6 +48,9 @@ interface TrashState {
   /** Restore: remove an asset from confirmed (cancels the pending deletion). */
   removeFromConfirmed(assetId: string): void;
 
+  /** Batch-remove multiple assets from confirmed in a single state update. */
+  removeAllConfirmed(assetIds: string[]): void;
+
   /** Record assets that could not be deleted at the OS level. */
   markFailed(assetIds: string[]): void;
 
@@ -104,6 +107,13 @@ export const useTrashStore = create<TrashState>()(
       removeFromConfirmed(assetId) {
         set((state) => ({
           confirmed: state.confirmed.filter((c) => c.assetId !== assetId),
+        }));
+      },
+
+      removeAllConfirmed(assetIds) {
+        const ids = new Set(assetIds);
+        set((state) => ({
+          confirmed: state.confirmed.filter((c) => !ids.has(c.assetId)),
         }));
       },
 

@@ -41,6 +41,7 @@ export interface DeletionServiceResult {
  * @param assetIds  The staged asset IDs to confirm for deletion.
  */
 export function confirmStaged(assetIds: string[]): void {
+  if (assetIds.length === 0) return;
   const retentionDays = useSettingsStore.getState().retentionDays;
   useTrashStore.getState().confirmDeletion(assetIds, retentionDays);
 }
@@ -68,11 +69,9 @@ export function confirmStaged(assetIds: string[]): void {
  * IDs, falls back to 0 for those assets. The caller is responsible for
  * updating any downstream display that needs the precise figure.
  *
- * Note on confirmed-list cleanup: `removeFromConfirmed` accepts a single ID,
- * so we call it once per deleted asset. Each call is a synchronous Zustand
- * state mutation; for typical trash sizes (< a few hundred assets) this is
- * negligible. If this becomes a bottleneck, adding a batch variant to the
- * trash store would eliminate the per-asset overhead.
+ * Note on confirmed-list cleanup: Successfully deleted assets are removed from
+ * the confirmed list in a single batched Zustand state update via
+ * `removeAllConfirmed`, avoiding repeated individual mutations.
  *
  * @param assetIds   Asset IDs to delete.
  * @param bytesMap   Optional map of assetId → file size in bytes for freed
@@ -84,10 +83,10 @@ export async function executeDelete(
 ): Promise<DeletionServiceResult> {
   const { deleted, failed } = await deleteAssets(assetIds);
 
-  // Remove successfully deleted assets from the confirmed list.
+  // Remove successfully deleted assets from the confirmed list in one update.
   const trash = useTrashStore.getState();
-  for (const assetId of deleted) {
-    trash.removeFromConfirmed(assetId);
+  if (deleted.length > 0) {
+    trash.removeAllConfirmed(deleted);
   }
 
   // Record OS-level failures so the UI can surface and retry them.
@@ -150,6 +149,8 @@ export async function retryFailed(
 ): Promise<DeletionServiceResult> {
   const trash = useTrashStore.getState();
   const failedAssetIds = [...trash.failedDeletions];
+
+  if (failedAssetIds.length === 0) return { freed: 0, failed: [] };
 
   // Clear before attempting so re-failures are recorded as a clean new batch.
   trash.clearFailed();
