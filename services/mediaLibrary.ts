@@ -175,7 +175,8 @@ export async function requestPermissions(): Promise<boolean> {
   // accessPrivileges is 'all' | 'limited' | 'none' on iOS 14+;
   // on earlier iOS and Android it may be undefined when fully granted.
   return (
-    response.status === 'granted' && response.accessPrivileges !== 'limited'
+    response.status === 'granted' &&
+      (response.accessPrivileges == null || response.accessPrivileges === 'all')
   );
 }
 
@@ -284,7 +285,8 @@ export async function getAssetInfo(assetId: string): Promise<Asset | null> {
       shouldDownloadFromNetwork: false,
     });
     return mapAssetInfo(info as RuntimeAssetInfo);
-  } catch {
+  } catch (err) {
+    if (__DEV__) console.warn('[getAssetInfo]', err);
     return null;
   }
 }
