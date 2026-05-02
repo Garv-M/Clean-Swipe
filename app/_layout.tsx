@@ -1,13 +1,14 @@
 import React, { useEffect } from 'react';
 import { AppState } from 'react-native';
 import { Colors } from '@/constants/theme';
-import { Stack } from 'expo-router';
+import { Redirect, Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useRetentionScheduler } from '@/hooks/useRetentionScheduler';
 import { flushPendingWrites } from '@/store/persistence';
+import { useSettingsStore } from '@/store/settings';
 import '../global.css';
 
 export const unstable_settings = {
@@ -28,12 +29,16 @@ function AppShell({ children }: { children: React.ReactNode }) {
 }
 
 export default function RootLayout() {
+  const onboarded = useSettingsStore((s) => s.onboarded);
+
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: Colors.background }}>
       <SafeAreaProvider>
         <AppShell>
+          {!onboarded && <Redirect href="/onboarding" />}
           <Stack>
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="onboarding" options={{ headerShown: false }} />
             <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
           </Stack>
           <StatusBar style="light" />
