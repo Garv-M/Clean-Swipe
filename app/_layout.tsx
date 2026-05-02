@@ -36,7 +36,7 @@ export default function RootLayout() {
     if (!onboarded) {
       router.replace('/onboarding');
     }
-  }, [onboarded]);
+  }, [onboarded, router]);
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: Colors.background }}>

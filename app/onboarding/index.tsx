@@ -257,6 +257,7 @@ function ScanStep({ onComplete }: { onComplete: () => void }) {
       cancelled = true;
       clearInterval(statusTimer);
       if (displayTimer !== undefined) clearTimeout(displayTimer);
+      setScanning(false);
     };
   }, []);
 
