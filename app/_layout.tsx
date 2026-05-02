@@ -1,10 +1,9 @@
 import { Colors } from '@/constants/theme';
 import { useRetentionScheduler } from '@/hooks/useRetentionScheduler';
 import { flushPendingWrites } from '@/store/persistence';
-import { useSettingsStore } from '@/store/settings';
-import { Stack, useRouter } from 'expo-router';
+import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import React, { useEffect, useLayoutEffect } from 'react';
+import React, { useEffect } from 'react';
 import { AppState } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import 'react-native-reanimated';
@@ -29,15 +28,6 @@ function AppShell({ children }: { children: React.ReactNode }) {
 }
 
 export default function RootLayout() {
-  const onboarded = useSettingsStore((s) => s.onboarded);
-  const router = useRouter();
-
-  useLayoutEffect(() => {
-    if (!onboarded) {
-      router.replace('/onboarding');
-    }
-  }, [onboarded, router]);
-
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: Colors.background }}>
       <SafeAreaProvider>
