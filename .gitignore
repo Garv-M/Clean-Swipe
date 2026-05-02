@@ -44,3 +44,5 @@ app-example
 .github/instructions/wmt-copilot.instructions.md
 /design
 /.claude
+/.superpowers
+/docs
