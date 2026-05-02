@@ -11,6 +11,6 @@ interface UIState {
 export const useUIStore = create<UIState>()((set) => ({
   isSwipeSessionActive: false,
   tabBarVisible: true,
-  setSwipeSessionActive: (active) => set({ isSwipeSessionActive: active }),
+  setSwipeSessionActive: (active) => set({ isSwipeSessionActive: active, tabBarVisible: !active }),
   setTabBarVisible: (visible) => set({ tabBarVisible: visible }),
 }));

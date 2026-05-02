@@ -83,9 +83,11 @@ export const useStatsStore = create<StatsState>()(
       },
 
       recordReviewed(count = 1) {
+        const today = todayDateString();
         set((state) => ({
           photosReviewed: state.photosReviewed + count,
-          todayReviewed: state.todayReviewed + count,
+          todayReviewed: (state.lastResetDate === today ? state.todayReviewed : 0) + count,
+          lastResetDate: today,
         }));
       },
 

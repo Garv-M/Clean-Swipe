@@ -24,7 +24,7 @@ interface ClusterState {
   setScanning(scanning: boolean): void;
 
   /** Merge a partial patch into a single cluster by id (no-op if id not found). */
-  updateCluster(id: string, patch: Partial<EventCluster>): void;
+  updateCluster(id: string, patch: Partial<Omit<EventCluster, 'id'>>): void;
 
   /** Remove a cluster by id (e.g. after the user dismisses or acts on it). */
   removeCluster(id: string): void;
@@ -42,7 +42,7 @@ export const useClusterStore = create<ClusterState>()(
       isScanning: false,
 
       setClusters(clusters) {
-        set({ clusters, lastClusteredAt: Date.now() });
+        set({ clusters, lastClusteredAt: Date.now(), isScanning: false });
       },
 
       setScanning(scanning) {

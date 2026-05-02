@@ -67,12 +67,17 @@ export const useTrashStore = create<TrashState>()(
       failedDeletions: [],
 
       stageForDeletion(assetId, sessionId, isSuspicious) {
-        set((state) => ({
-          staged: [
-            ...state.staged,
-            { assetId, sessionId, isSuspicious, stagedAt: Date.now() },
-          ],
-        }));
+        set((state) => {
+          const alreadyStaged = state.staged.some((s) => s.assetId === assetId);
+          const alreadyConfirmed = state.confirmed.some((c) => c.assetId === assetId);
+          if (alreadyStaged || alreadyConfirmed) return state;
+          return {
+            staged: [
+              ...state.staged,
+              { assetId, sessionId, isSuspicious, stagedAt: Date.now() },
+            ],
+          };
+        });
       },
 
       confirmDeletion(assetIds, retentionDays) {

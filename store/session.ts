@@ -38,11 +38,19 @@ interface SessionState {
   recordDecision(sessionId: string, record: DecisionRecord): void;
 
   /**
-   * Pop the most-recent undoStack entry, remove its corresponding record from
-   * `decisions` (matched by assetId + timestamp), and return it.
+   * Pop the most-recent undoStack entry, remove it from `decisions` by
+   * reference equality, and return it.
    * Returns null if the session is missing or the undoStack is empty.
+   *
+   * Cross-store coordination: when the returned record has
+   * `decision === Decision.DELETE_STAGED`, the caller must also call
+   * `useTrashStore.getState().removeFromStaged(record.assetId)` to keep the
+   * trash store consistent.
    */
   undo(sessionId: string): DecisionRecord | null;
+
+  /** Advance the cursor for a session (i.e. move to the next asset). */
+  setCursor(sessionId: string, cursor: number): void;
 
   /** Stamp `completedAt` on the session with the current wall-clock time. */
   completeSession(sessionId: string): void;
@@ -103,34 +111,46 @@ export const useSessionStore = create<SessionState>()(
         });
       },
 
+      /**
+       * Cross-store note: when the returned record has
+       * `decision === Decision.DELETE_STAGED`, the caller must also call
+       * `useTrashStore.getState().removeFromStaged(record.assetId)` to keep
+       * the trash store consistent.
+       */
       undo(sessionId) {
-        // Use a closure variable that the synchronous `set` updater will fill.
-        let popped: DecisionRecord | null = null;
-
+        const session = get().sessions[sessionId];
+        if (!session || session.undoStack.length === 0) return null;
+        // Capture the reference before entering set() so the filter can use it.
+        const record = session.undoStack[session.undoStack.length - 1];
         set((state) => {
-          const session = state.sessions[sessionId];
-          if (!session || session.undoStack.length === 0) return state;
-
-          const undoStack = [...session.undoStack];
-          // Access the last element before popping so TypeScript is satisfied.
-          const record = undoStack[undoStack.length - 1] as DecisionRecord;
-          undoStack.pop();
-          popped = record;
-
-          // Remove from decisions: match by assetId + timestamp.
-          const decisions = session.decisions.filter(
-            (d) => !(d.assetId === record.assetId && d.timestamp === record.timestamp),
-          );
-
+          const s = state.sessions[sessionId];
+          if (!s) return state;
           return {
             sessions: {
               ...state.sessions,
-              [sessionId]: { ...session, decisions, undoStack },
+              [sessionId]: {
+                ...s,
+                undoStack: s.undoStack.slice(0, -1),
+                // Reference equality: record is the same object stored in decisions.
+                decisions: s.decisions.filter((d) => d !== record),
+              },
             },
           };
         });
+        return record;
+      },
 
-        return popped;
+      setCursor(sessionId, cursor) {
+        set((state) => {
+          const session = state.sessions[sessionId];
+          if (!session) return state;
+          return {
+            sessions: {
+              ...state.sessions,
+              [sessionId]: { ...session, cursor },
+            },
+          };
+        });
       },
 
       completeSession(sessionId) {

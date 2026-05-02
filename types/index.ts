@@ -143,13 +143,13 @@ export interface Session {
    */
   queueIds: string[];
 
-  /** Append-only audit log of all decisions made this session, including undone ones. */
+  /** Live set of current effective decisions for this session. Entries are removed when the user undoes a decision. */
   decisions: DecisionRecord[];
 
   /**
    * Sliding window of decisions eligible for undo, capped at 20 entries.
-   * These entries are a strict subset of the decisions array.
    * The last element is the most-recent decision that can be reversed.
+   * Entries here are also present in decisions; undoing removes from both.
    */
   undoStack: DecisionRecord[];
 
