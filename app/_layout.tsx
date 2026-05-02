@@ -1,7 +1,7 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useLayoutEffect } from 'react';
 import { AppState } from 'react-native';
 import { Colors } from '@/constants/theme';
-import { Redirect, Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -30,12 +30,18 @@ function AppShell({ children }: { children: React.ReactNode }) {
 
 export default function RootLayout() {
   const onboarded = useSettingsStore((s) => s.onboarded);
+  const router = useRouter();
+
+  useLayoutEffect(() => {
+    if (!onboarded) {
+      router.replace('/onboarding');
+    }
+  }, [onboarded]);
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: Colors.background }}>
       <SafeAreaProvider>
         <AppShell>
-          {!onboarded && <Redirect href="/onboarding" />}
           <Stack>
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             <Stack.Screen name="onboarding" options={{ headerShown: false }} />
