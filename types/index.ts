@@ -11,6 +11,16 @@
  */
 
 // ---------------------------------------------------------------------------
+// GeoPoint
+// ---------------------------------------------------------------------------
+
+/** A WGS-84 latitude/longitude coordinate pair. */
+export interface GeoPoint {
+  lat: number;
+  lng: number;
+}
+
+// ---------------------------------------------------------------------------
 // Asset
 // ---------------------------------------------------------------------------
 
@@ -34,17 +44,14 @@ export interface Asset {
     height: number;
   };
 
-  /** File size in bytes (0 if unknown / not yet fetched). */
-  bytes: number;
+  /** File size in bytes. Undefined means the value has not yet been fetched. */
+  bytes?: number;
 
   /** Creation timestamp in Unix milliseconds. */
   createdAt: number;
 
   /** GPS coordinates embedded in EXIF, if available. */
-  location?: {
-    lat: number;
-    lng: number;
-  };
+  location?: GeoPoint;
 
   /** Album names this asset belongs to (may be empty). */
   albums: string[];
@@ -136,11 +143,12 @@ export interface Session {
    */
   queueIds: string[];
 
-  /** All decisions made during this session, in chronological order. */
+  /** Append-only audit log of all decisions made this session, including undone ones. */
   decisions: DecisionRecord[];
 
   /**
-   * Stack supporting the undo gesture.
+   * Sliding window of decisions eligible for undo, capped at 20 entries.
+   * These entries are a strict subset of the decisions array.
    * The last element is the most-recent decision that can be reversed.
    */
   undoStack: DecisionRecord[];
@@ -152,8 +160,10 @@ export interface Session {
   freedBytesEstimated: number;
 
   /**
-   * Current position in queueIds — used to resume a session after the app
-   * has been backgrounded or restarted. Undefined means start from 0.
+   * Index of the next asset in queueIds to be shown to the user.
+   * cursor === 0 means no assets have been reviewed yet.
+   * cursor === queueIds.length means the session is fully reviewed.
+   * Undefined is equivalent to 0 (session has not started).
    */
   cursor?: number;
 }
@@ -182,8 +192,8 @@ export interface EventCluster {
     to: number;
   };
 
-  /** Total number of assets in this cluster. */
-  photoCount: number;
+  /** Total number of assets (photos and videos) in this cluster. */
+  assetCount: number;
 
   /** Sum of bytes across all assets (used for storage-savings preview). */
   estimatedBytes: number;
@@ -195,10 +205,7 @@ export interface EventCluster {
    * Approximate geographic centre of the cluster, derived by averaging
    * per-asset GPS coordinates.
    */
-  location?: {
-    lat: number;
-    lng: number;
-  };
+  location?: GeoPoint;
 
   /**
    * Content origin hint surfaced to the user.
