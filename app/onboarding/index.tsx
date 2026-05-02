@@ -124,15 +124,19 @@ function PermissionsStep({ onGranted }: { onGranted: () => void }) {
   const insets = useSafeAreaInsets();
   const [state, setState] = useState<PermState>('idle');
 
-  const handleRequest = async () => {
+  const handleRequest = useCallback(async () => {
     setState('requesting');
-    const granted = await requestPermissions();
-    if (granted) {
-      onGranted();
-    } else {
-      setState('denied');
+    try {
+      const granted = await requestPermissions();
+      if (granted) {
+        onGranted();
+      } else {
+        setState('denied');
+      }
+    } catch {
+      setState('idle');
     }
-  };
+  }, [onGranted]);
 
   return (
     <View
