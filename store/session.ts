@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Session, DecisionRecord } from '@/types';
+import { Decision } from '@/types';
 import { createPersistOptions } from '@/store/persistence';
 
 // ---------------------------------------------------------------------------
@@ -13,9 +14,13 @@ const UNDO_STACK_LIMIT = 20;
 // ID generation
 // ---------------------------------------------------------------------------
 
-function generateId(): string {
+const generateId = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // Fallback for older Hermes versions
   return Date.now().toString(36) + Math.random().toString(36).slice(2);
-}
+};
 
 // ---------------------------------------------------------------------------
 // State & actions interface
@@ -63,6 +68,9 @@ interface SessionState {
 
   /** Append additional asset IDs to a session's review queue. */
   appendQueueIds(sessionId: string, ids: string[]): void;
+
+  /** Stamp `startedSwipingAt` the first time a user swipes in a session. */
+  markSessionStarted(sessionId: string): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -102,10 +110,14 @@ export const useSessionStore = create<SessionState>()(
             undoStack.splice(0, undoStack.length - UNDO_STACK_LIMIT);
           }
 
+          const freedBytesEstimated =
+            session.freedBytesEstimated +
+            (record.decision === Decision.DELETE_STAGED ? (record.bytes ?? 0) : 0);
+
           return {
             sessions: {
               ...state.sessions,
-              [sessionId]: { ...session, decisions, undoStack },
+              [sessionId]: { ...session, decisions, undoStack, freedBytesEstimated },
             },
           };
         });
@@ -186,6 +198,19 @@ export const useSessionStore = create<SessionState>()(
                 ...session,
                 queueIds: [...session.queueIds, ...ids],
               },
+            },
+          };
+        });
+      },
+
+      markSessionStarted(sessionId) {
+        set((state) => {
+          const s = state.sessions[sessionId];
+          if (!s || s.startedSwipingAt != null) return state;
+          return {
+            sessions: {
+              ...state.sessions,
+              [sessionId]: { ...s, startedSwipingAt: Date.now() },
             },
           };
         });

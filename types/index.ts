@@ -108,6 +108,9 @@ export interface DecisionRecord {
    * nudge at session end.
    */
   isSuspicious?: boolean;
+
+  /** Estimated bytes freed if this is a DELETE_STAGED decision. Undefined for other decisions. */
+  bytes?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -119,7 +122,7 @@ export interface DecisionRecord {
  * Sessions are persisted to MMKV so they survive app restarts.
  */
 export interface Session {
-  /** UUID v4, generated at session creation time. */
+  /** Unique session identifier (UUID v4 when available, compact timestamp+random otherwise). */
   id: string;
 
   /** Optional user-facing label, e.g. "Weekend clean-up". */

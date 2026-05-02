@@ -28,6 +28,9 @@ interface ClusterState {
 
   /** Remove a cluster by id (e.g. after the user dismisses or acts on it). */
   removeCluster(id: string): void;
+
+  /** Create a new cluster with a generated id and append it to the list. Returns the new cluster's id. */
+  createCustomCluster(cluster: Omit<EventCluster, 'id'>): string;
 }
 
 // ---------------------------------------------------------------------------
@@ -61,6 +64,16 @@ export const useClusterStore = create<ClusterState>()(
         set((state) => ({
           clusters: state.clusters.filter((c) => c.id !== id),
         }));
+      },
+
+      createCustomCluster(cluster) {
+        const id =
+          typeof crypto !== 'undefined' && crypto.randomUUID
+            ? crypto.randomUUID()
+            : Date.now().toString(36) + Math.random().toString(36).slice(2);
+        const newCluster: EventCluster = { ...cluster, id };
+        set((state) => ({ clusters: [...state.clusters, newCluster] }));
+        return id;
       },
     }),
     createPersistOptions<ClusterState>('clusters'),
