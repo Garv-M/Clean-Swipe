@@ -21,28 +21,40 @@ export function useRetentionScheduler(): void {
   const appState = useRef<AppStateStatus>(AppState.currentState);
 
   useEffect(() => {
+    // Concurrency guard: prevents overlapping async runs if AppState fires
+    // rapidly or mount + a quick foreground transition happen back-to-back.
+    let isRunning = false;
+
     const runCheck = async (): Promise<void> => {
-      // Reset today's reviewed count if the calendar day has rolled over.
-      useStatsStore.getState().resetTodayIfNeeded();
+      if (isRunning) return;
+      isRunning = true;
+      try {
+        // Reset today's reviewed count if the calendar day has rolled over.
+        useStatsStore.getState().resetTodayIfNeeded();
 
-      // Collect all confirmed items whose retention window has elapsed.
-      const { confirmed } = useTrashStore.getState();
-      const now = Date.now();
-      const expiredIds = confirmed
-        .filter((item) => item.expiresAt < now)
-        .map((item) => item.assetId);
+        // Collect all confirmed items whose retention window has elapsed.
+        const { confirmed } = useTrashStore.getState();
+        const now = Date.now();
+        const expiredIds = confirmed
+          .filter((item) => item.expiresAt < now)
+          .map((item) => item.assetId);
 
-      if (expiredIds.length > 0) {
-        // bytesMap is omitted — bytes were not captured at confirmation time.
-        // The freed total will be 0 for auto-expired items; this is acceptable
-        // because the user never sees a per-item size for auto-purged assets.
-        await executeDelete(expiredIds);
+        if (expiredIds.length > 0) {
+          // bytesMap is omitted — bytes were not captured at confirmation time.
+          // The freed total will be 0 for auto-expired items; this is acceptable
+          // because the user never sees a per-item size for auto-purged assets.
+          await executeDelete(expiredIds);
+        }
+      } finally {
+        isRunning = false;
       }
     };
 
     // Run immediately on mount so items that expired while the app was closed
     // are cleaned up before the user interacts with the UI.
-    runCheck();
+    runCheck().catch((err) => {
+      if (__DEV__) console.error('[useRetentionScheduler] runCheck failed:', err);
+    });
 
     const subscription = AppState.addEventListener(
       'change',
@@ -57,7 +69,9 @@ export function useRetentionScheduler(): void {
         const isNowActive = nextState === 'active';
 
         if (wasBackground && isNowActive) {
-          runCheck();
+          runCheck().catch((err) => {
+            if (__DEV__) console.error('[useRetentionScheduler] runCheck failed:', err);
+          });
         }
       },
     );
