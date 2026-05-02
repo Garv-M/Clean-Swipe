@@ -1,124 +1,125 @@
 /**
  * store/persistence.ts
  *
- * Shared MMKV-backed Zustand persistence infrastructure.
- * This file has NO app-level dependencies — it is pure infrastructure.
+ * Shared Zustand persistence infrastructure.
+ * Uses MMKV (encrypted) in dev/prod builds; falls back to in-memory storage
+ * when running in Expo Go (which does not support NitroModules).
  *
  * Exports:
- *   mmkv                   — raw MMKV instance for direct key-value access
+ *   mmkv                   — raw MMKV instance, or null in Expo Go
  *   debouncedMmkvStorage   — StateStorage adapter with 300ms debounced writes
  *   flushPendingWrites     — flush all buffered writes immediately (call before backgrounding)
  *   createPersistOptions   — helper that builds PersistOptions for a named store
  */
 
-import { createMMKV } from 'react-native-mmkv';
 import {
-    createJSONStorage,
-    type PersistOptions,
-    type StateStorage,
+  createJSONStorage,
+  type PersistOptions,
+  type StateStorage,
 } from 'zustand/middleware';
 
 // ---------------------------------------------------------------------------
-// 1. Shared encrypted MMKV instance
-//    encryptionKey is 16 ASCII bytes — fits AES-128 (the default).
-//
-// SECURITY NOTE: This key is embedded in the JS bundle and is recoverable by
-// anyone with access to the app binary. MMKV encryption here prevents casual
-// filesystem browsing of the .mmkv file (e.g. via iTunes file sharing), but
-// does NOT protect against adversarial extraction. For this app's data
-// (session state, user preferences), this trade-off is acceptable.
-// TODO: Replace with a device-derived key from expo-secure-store when the
-// dependency is available.
+// Minimal MMKV interface — avoids a top-level import that crashes Expo Go
 // ---------------------------------------------------------------------------
-export const mmkv = createMMKV({
-  id: 'clean-swipe-store',
-  encryptionKey: 'cs-secure-key-v1',
-});
-
-// ---------------------------------------------------------------------------
-// 2. Zustand StateStorage adapter (internal — not exported)
-//    Maps the zustand interface onto react-native-mmkv v4 method names:
-//      getString  (returns string | undefined  → coerce to string | null)
-//      set        (write string/bool/number/ArrayBuffer)
-//      remove     (v4 renamed from v2's "delete")
-// ---------------------------------------------------------------------------
-const mmkvStorage: StateStorage = {
-  getItem: (name: string) => mmkv.getString(name) ?? null,
-  setItem: (name: string, value: string): void => {
-    mmkv.set(name, value);
-  },
-  removeItem: (name: string): void => {
-    mmkv.remove(name);
-  },
+type MMKVInstance = {
+  getString(key: string): string | undefined;
+  set(key: string, value: string): void;
+  remove(key: string): void;
 };
 
 // ---------------------------------------------------------------------------
+// 1. MMKV instance — null when NitroModules are unavailable (Expo Go)
+//
+// SECURITY NOTE: The encryption key is embedded in the JS bundle and is
+// recoverable from the app binary. MMKV encryption here prevents casual
+// filesystem browsing of the .mmkv file (e.g. via iTunes file sharing), but
+// does NOT protect against adversarial extraction. For this app's data
+// (session state, user preferences), this trade-off is acceptable.
+// TODO: Replace with a device-derived key from expo-secure-store when available.
+// ---------------------------------------------------------------------------
+let _mmkv: MMKVInstance | null = null;
+
+try {
+  // Use require() so Metro can tree-shake this in Expo Go without a hard crash.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { createMMKV } = require('react-native-mmkv') as {
+    createMMKV: (opts: { id: string; encryptionKey: string }) => MMKVInstance;
+  };
+  _mmkv = createMMKV({ id: 'clean-swipe-store', encryptionKey: 'cs-secure-key-v1' });
+} catch {
+  if (__DEV__) {
+    console.warn(
+      '[persistence] MMKV unavailable (Expo Go / NitroModules not supported). ' +
+        'Falling back to in-memory storage — state will NOT persist across restarts.',
+    );
+  }
+}
+
+/** Raw MMKV instance. Null when running in Expo Go. */
+export const mmkv = _mmkv;
+
+// ---------------------------------------------------------------------------
+// 2. Base synchronous storage
+//    MMKV in real builds; plain Map in Expo Go.
+// ---------------------------------------------------------------------------
+const memStore = new Map<string, string>();
+
+const baseStorage: StateStorage = _mmkv
+  ? {
+      getItem: (name) => _mmkv!.getString(name) ?? null,
+      setItem: (name, value) => { _mmkv!.set(name, value); },
+      removeItem: (name) => { _mmkv!.remove(name); },
+    }
+  : {
+      getItem: (name) => memStore.get(name) ?? null,
+      setItem: (name, value) => { memStore.set(name, value); },
+      removeItem: (name) => { memStore.delete(name); },
+    };
+
+// ---------------------------------------------------------------------------
 // 3. Debounced write wrapper
-//    Batches setItem calls and flushes after 300 ms of inactivity.
-//    One pending timer is tracked per key so rapid updates to the same key
-//    collapse into a single disk write (critical during fast-swipe sessions).
-//
-//    getItem    — always pass-through (reads must be fresh)
-//    removeItem — always immediate (consistency: no stale pending write)
-//
-//    Each Map entry carries both the timer ID and the pending value so that
-//    flushPendingWrites() can write synchronously without relying on the
-//    timer callback.
+//    Batches setItem calls and flushes after 300 ms of inactivity per key.
+//    Reads and removes are always immediate.
 // ---------------------------------------------------------------------------
 const pendingWrites = new Map<string, { timer: ReturnType<typeof setTimeout>; value: string }>();
 
 export const debouncedMmkvStorage: StateStorage = {
-  getItem: (name: string) => mmkv.getString(name) ?? null,
+  getItem: (name) => baseStorage.getItem(name),
 
-  setItem: (name: string, value: string): void => {
+  setItem: (name, value) => {
     const existing = pendingWrites.get(name);
-    if (existing !== undefined) {
-      clearTimeout(existing.timer);
-    }
+    if (existing !== undefined) clearTimeout(existing.timer);
     const timer = setTimeout(() => {
-      mmkvStorage.setItem(name, value);
+      baseStorage.setItem(name, value);
       pendingWrites.delete(name);
     }, 300);
     pendingWrites.set(name, { timer, value });
   },
 
-  removeItem: (name: string): void => {
-    // Cancel any buffered write so a removed key cannot resurface.
+  removeItem: (name) => {
     const existing = pendingWrites.get(name);
     if (existing !== undefined) {
       clearTimeout(existing.timer);
       pendingWrites.delete(name);
     }
-    mmkvStorage.removeItem(name);
+    baseStorage.removeItem(name);
   },
 };
 
 // ---------------------------------------------------------------------------
 // 4. flushPendingWrites
-//    Writes all debounced entries to MMKV synchronously and clears the queue.
-//    Call this from the app root before the app moves to the background so
-//    that no state is lost when the JS runtime is suspended.
-//
-//    Usage (e.g. in AppState change handler):
-//      AppState.addEventListener('change', (state) => {
-//        if (state === 'background') flushPendingWrites();
-//      });
+//    Drains the debounce queue synchronously. Call before backgrounding.
 // ---------------------------------------------------------------------------
 export function flushPendingWrites(): void {
   for (const [name, { timer, value }] of pendingWrites) {
     clearTimeout(timer);
-    mmkvStorage.setItem(name, value);
+    baseStorage.setItem(name, value);
     pendingWrites.delete(name);
   }
 }
 
 // ---------------------------------------------------------------------------
 // 5. createPersistOptions helper
-//    Returns a ready-made PersistOptions object for zustand's persist()
-//    middleware. Each store passes its unique name; storage is shared.
-//
-//    Usage:
-//      persist(stateCreator, createPersistOptions<MyState>('my-store'))
 // ---------------------------------------------------------------------------
 export function createPersistOptions<T>(storeName: string): PersistOptions<T> {
   return {
