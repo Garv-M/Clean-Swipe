@@ -9,11 +9,11 @@
  * side-effects are fire-and-forget against the Zustand stores.
  */
 
+import { executeDelete } from '@/services/deletion';
+import { useStatsStore } from '@/store/stats';
+import { useTrashStore } from '@/store/trash';
 import { useEffect, useRef } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
-import { useTrashStore } from '@/store/trash';
-import { useStatsStore } from '@/store/stats';
-import { executeDelete } from '@/services/deletion';
 
 export function useRetentionScheduler(): void {
   // Track the previous AppState value so we can detect background → active

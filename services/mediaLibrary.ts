@@ -19,8 +19,8 @@
  *   milliseconds on both iOS and Android.
  */
 
-import * as MediaLibrary from 'expo-media-library';
 import type { Asset } from '@/types';
+import * as MediaLibrary from 'expo-media-library';
 
 // ---------------------------------------------------------------------------
 // Runtime-only field augmentation

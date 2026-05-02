@@ -1,6 +1,6 @@
+import { createPersistOptions } from '@/store/persistence';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { createPersistOptions } from '@/store/persistence';
 
 // ---------------------------------------------------------------------------
 // Sub-types (local — no shared-type entry needed for these storage shapes)

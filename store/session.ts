@@ -1,8 +1,8 @@
+import { createPersistOptions } from '@/store/persistence';
+import type { DecisionRecord, Session } from '@/types';
+import { Decision } from '@/types';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Session, DecisionRecord } from '@/types';
-import { Decision } from '@/types';
-import { createPersistOptions } from '@/store/persistence';
 
 // ---------------------------------------------------------------------------
 // Constants

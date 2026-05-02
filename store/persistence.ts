@@ -13,9 +13,9 @@
 
 import { createMMKV } from 'react-native-mmkv';
 import {
-  createJSONStorage,
-  type PersistOptions,
-  type StateStorage,
+    createJSONStorage,
+    type PersistOptions,
+    type StateStorage,
 } from 'zustand/middleware';
 
 // ---------------------------------------------------------------------------

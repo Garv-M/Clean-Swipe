@@ -11,10 +11,10 @@
  * outside of a React component tree.
  */
 
-import { useTrashStore } from '@/store/trash';
+import { deleteAssets } from '@/services/mediaLibrary';
 import { useSettingsStore } from '@/store/settings';
 import { useStatsStore } from '@/store/stats';
-import { deleteAssets } from '@/services/mediaLibrary';
+import { useTrashStore } from '@/store/trash';
 
 // ---------------------------------------------------------------------------
 // Result type

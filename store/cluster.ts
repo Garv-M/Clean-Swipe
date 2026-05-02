@@ -1,7 +1,7 @@
+import { createPersistOptions } from '@/store/persistence';
+import type { EventCluster } from '@/types';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { EventCluster } from '@/types';
-import { createPersistOptions } from '@/store/persistence';
 
 // ---------------------------------------------------------------------------
 // State & actions interface
