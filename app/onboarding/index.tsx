@@ -2,7 +2,7 @@ import { Button } from '@/components/ui/button';
 import { Text } from '@/components/ui/text';
 import { Colors } from '@/constants/theme';
 import { clusterAssets } from '@/services/clustering';
-import { fetchAssetsPage, requestPermissions } from '@/services/mediaLibrary';
+import { fetchAssetsPage, getScreenshotCount, requestPermissions } from '@/services/mediaLibrary';
 import { useClusterStore } from '@/store/cluster';
 import { useSettingsStore } from '@/store/settings';
 import type { Asset } from '@/types';
@@ -11,10 +11,13 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Dimensions, Linking, StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
-    runOnJS,
-    useAnimatedStyle,
-    useSharedValue,
-    withSpring,
+  Extrapolate,
+  interpolate,
+  runOnJS,
+  SharedValue,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -44,6 +47,38 @@ const WELCOME_CARDS = [
   },
 ];
 
+// ─── CardSlide ────────────────────────────────────────────────────────────────
+
+interface CardSlideProps {
+  card: { icon: string; headline: string; subtitle: string };
+  index: number;
+  translateX: SharedValue<number>;
+}
+
+function CardSlide({ card, index, translateX }: CardSlideProps) {
+  const animatedStyle = useAnimatedStyle(() => {
+    const position = (translateX.value + index * SCREEN_WIDTH) / SCREEN_WIDTH;
+    const scale = interpolate(position, [-1, 0, 1], [0.94, 1, 0.94], Extrapolate.CLAMP);
+    const opacity = interpolate(position, [-1, 0, 1], [0.45, 1, 0.45], Extrapolate.CLAMP);
+    return {
+      transform: [{ translateX: translateX.value }, { scale }],
+      opacity,
+    };
+  });
+
+  return (
+    <Animated.View style={[styles.card, animatedStyle]}>
+      <Text style={styles.cardIcon}>{card.icon}</Text>
+      <Text variant="title" style={styles.cardHeadline}>
+        {card.headline}
+      </Text>
+      <Text variant="label" style={styles.cardSubtitle}>
+        {card.subtitle}
+      </Text>
+    </Animated.View>
+  );
+}
+
 // ─── WelcomeStep ─────────────────────────────────────────────────────────────
 
 interface WelcomeStepProps {
@@ -53,47 +88,44 @@ interface WelcomeStepProps {
 function WelcomeStep({ onComplete }: WelcomeStepProps) {
   const insets = useSafeAreaInsets();
   const [activeIndex, setActiveIndex] = useState(0);
+
   const currentIndex = useSharedValue(0);
   const translateX = useSharedValue(0);
+  const startX = useSharedValue(0);
 
   const syncIndex = useCallback((i: number) => setActiveIndex(i), []);
 
   const pan = Gesture.Pan()
+    .onStart(() => {
+      startX.value = translateX.value;
+    })
     .onUpdate((e) => {
-      translateX.value = -currentIndex.value * SCREEN_WIDTH + e.translationX;
+      translateX.value = startX.value + e.translationX;
     })
     .onEnd((e) => {
-      const threshold = SCREEN_WIDTH * 0.3;
+      const threshold = SCREEN_WIDTH * 0.12;
       let next = currentIndex.value;
-      if (e.translationX < -threshold && currentIndex.value < WELCOME_CARDS.length - 1) {
-        next = currentIndex.value + 1;
-      } else if (e.translationX > threshold && currentIndex.value > 0) {
-        next = currentIndex.value - 1;
+      if (e.translationX < -threshold || e.velocityX < -400) {
+        next = Math.min(currentIndex.value + 1, WELCOME_CARDS.length - 1);
+      } else if (e.translationX > threshold || e.velocityX > 400) {
+        next = Math.max(currentIndex.value - 1, 0);
       }
       currentIndex.value = next;
       runOnJS(syncIndex)(next);
-      translateX.value = withSpring(-next * SCREEN_WIDTH, { damping: 20, stiffness: 150 });
+      translateX.value = withSpring(-next * SCREEN_WIDTH, {
+        damping: 30,
+        stiffness: 300,
+        overshootClamping: true,
+      });
     });
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: translateX.value }],
-  }));
 
   return (
     <View style={[styles.container, { paddingBottom: insets.bottom + 32 }]}>
       <View style={styles.cardsContainer}>
         <GestureDetector gesture={pan}>
-          <Animated.View style={[styles.cardsRow, animatedStyle]}>
+          <Animated.View style={styles.cardsRow}>
             {WELCOME_CARDS.map((card, i) => (
-              <View key={i} style={styles.card}>
-                <Text style={styles.cardIcon}>{card.icon}</Text>
-                <Text variant="title" style={styles.cardHeadline}>
-                  {card.headline}
-                </Text>
-                <Text variant="label" style={styles.cardSubtitle}>
-                  {card.subtitle}
-                </Text>
-              </View>
+              <CardSlide key={i} card={card} index={i} translateX={translateX} />
             ))}
           </Animated.View>
         </GestureDetector>
@@ -104,10 +136,14 @@ function WelcomeStep({ onComplete }: WelcomeStepProps) {
           {WELCOME_CARDS.map((_, i) => (
             <View
               key={i}
-              style={[styles.dot, i === activeIndex ? styles.dotActive : styles.dotInactive]}
+              style={[
+                styles.dot,
+                i === activeIndex ? styles.dotActive : styles.dotInactive,
+              ]}
             />
           ))}
         </View>
+
         {activeIndex === WELCOME_CARDS.length - 1 && (
           <Button label="Get Started" onPress={onComplete} style={styles.fullWidthBtn} />
         )}
@@ -115,7 +151,6 @@ function WelcomeStep({ onComplete }: WelcomeStepProps) {
     </View>
   );
 }
-
 // ─── PermissionsStep ─────────────────────────────────────────────────────────
 
 type PermState = 'idle' | 'requesting' | 'denied';
@@ -185,17 +220,18 @@ const STATUS_MESSAGES = [
   'Grouping into sessions...',
   'Almost ready...',
 ];
-const MIN_DISPLAY_MS = 2500;
+const MIN_DISPLAY_MS = 3500;
 
 function ScanStep({ onComplete }: { onComplete: () => void }) {
   const insets = useSafeAreaInsets();
   const setClusters = useClusterStore((s) => s.setClusters);
   const setScanning = useClusterStore((s) => s.setScanning);
 
-  const [totalScanned, setTotalScanned] = useState(0);
+  const [totalPhotoScanned, setPhotoScanned] = useState(0);
+  const [totalVideoScanned, setVideoScanned] = useState(0);
   const [tripsFound, setTripsFound] = useState(0);
   const [screenshotsFound, setScreenshotsFound] = useState(0);
-  const [gbToReview, setGbToReview] = useState(0);
+  // const [gbToReview, setGbToReview] = useState(0);
   const [sessionCount, setSessionCount] = useState(0);
   const [statusIdx, setStatusIdx] = useState(0);
   const [scanDone, setScanDone] = useState(false);
@@ -204,38 +240,63 @@ function ScanStep({ onComplete }: { onComplete: () => void }) {
     const startTime = Date.now();
     let cancelled = false;
     let displayTimer: ReturnType<typeof setTimeout> | undefined;
+    const allAssets: Asset[] = [];
 
-    const statusTimer = setInterval(() => {
-      if (!cancelled) setStatusIdx((i) => Math.min(i + 1, STATUS_MESSAGES.length - 1));
-    }, 700);
+    const fetchWithTimeout = (opts: Parameters<typeof fetchAssetsPage>[0]) =>
+      Promise.race([
+        fetchAssetsPage(opts),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('timeout')), 15000)
+        ),
+      ]);
 
     const run = async () => {
       setScanning(true);
       let cursor: string | undefined;
-      const allAssets: Asset[] = [];
-      let screenshots = 0;
-      let totalBytes = 0;
+      let hasMore = true;
+      let firstPage = true;
 
-      do {
-        const page = await fetchAssetsPage({ after: cursor, first: 50 });
+      const screenshotCountPromise = getScreenshotCount();
+
+      while (hasMore) {
+        const page = await fetchWithTimeout({ after: cursor, first: 100 });
         if (cancelled) return;
+        if (page.assets.length === 0) break;
         allAssets.push(...page.assets);
-        screenshots += page.assets.filter((a) => a.filename.startsWith('Screenshot')).length;
-        totalBytes += page.assets.reduce((s, a) => s + (a.bytes ?? 3_000_000), 0);
         cursor = page.endCursor;
-        setTotalScanned(allAssets.length);
-        setScreenshotsFound(screenshots);
-        setGbToReview(Math.round((totalBytes / 1e9) * 10) / 10);
-      } while (cursor);
+        hasMore = page.hasNextPage && cursor != null;
+        setPhotoScanned(allAssets.filter((a) => a.kind === 'photo').length);
+        setVideoScanned(allAssets.filter((a) => a.kind === 'video').length);
+        if (firstPage) {
+          firstPage = false;
+          setStatusIdx(1);
+        }
+      }
 
       if (cancelled) return;
 
+      const ssCount = await screenshotCountPromise;
+      if (!cancelled) setScreenshotsFound(ssCount);
+
+      setStatusIdx(2);
       const clusters = clusterAssets(allAssets);
       setClusters(clusters);
 
-      const trips = clusters.filter((c) => c.source == null).length;
-      setTripsFound(trips);
-      setSessionCount(clusters.length);
+      const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
+      const tripClusters = clusters.filter(
+        (c) => c.source == null && (c.dateRange.to - c.dateRange.from) > TWO_DAYS_MS
+      );
+      if (__DEV__) {
+        const photos = allAssets.filter((a) => a.kind === 'photo').length;
+        const videos = allAssets.filter((a) => a.kind === 'video').length;
+        const withBytes = allAssets.filter((a) => a.bytes).length;
+        console.log(`[Scan] ${allAssets.length} assets (${photos} photos, ${videos} videos)`);
+        console.log(`[Scan] ${clusters.length} sessions, ${tripClusters.length} trips:`);
+        tripClusters.forEach((t) => console.log(`  → ${t.name} (${t.assetCount} assets)`));
+      }
+      setTripsFound(tripClusters.length);
+      setSessionCount(tripClusters.length);
+      setStatusIdx(3);
 
       const elapsed = Date.now() - startTime;
       const delay = Math.max(0, MIN_DISPLAY_MS - elapsed);
@@ -244,18 +305,28 @@ function ScanStep({ onComplete }: { onComplete: () => void }) {
       }, delay);
     };
 
-    run()
-      .catch(() => {
-        if (!cancelled) {
-          setScanning(false);
-          setScanDone(true);
-        }
-      })
-      .finally(() => clearInterval(statusTimer));
+    run().catch(() => {
+      if (cancelled) return;
+      if (allAssets.length > 0) {
+        const clusters = clusterAssets(allAssets);
+        setClusters(clusters);
+        const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
+        setTripsFound(
+          clusters.filter((c) => c.source == null && (c.dateRange.to - c.dateRange.from) > TWO_DAYS_MS).length
+        );
+        setSessionCount(
+          clusters.filter((c) => c.source == null && (c.dateRange.to - c.dateRange.from) > TWO_DAYS_MS).length
+        );
+        setStatusIdx(3);
+        setScanDone(true);
+      } else {
+        setScanning(false);
+        setScanDone(true);
+      }
+    });
 
     return () => {
       cancelled = true;
-      clearInterval(statusTimer);
       if (displayTimer !== undefined) clearTimeout(displayTimer);
       setScanning(false);
     };
@@ -269,7 +340,7 @@ function ScanStep({ onComplete }: { onComplete: () => void }) {
         { paddingTop: insets.top + 60, paddingBottom: insets.bottom + 32 },
       ]}>
       <View style={styles.scanContent}>
-        <Text style={styles.scanBigNumber}>{totalScanned.toLocaleString()}</Text>
+        <Text style={styles.scanBigNumber}>{totalPhotoScanned.toLocaleString()}</Text>
         {scanDone ? (
           <Text variant="body" style={styles.scanReveal}>
             photos — organised into {sessionCount} sessions for you
@@ -294,9 +365,9 @@ function ScanStep({ onComplete }: { onComplete: () => void }) {
             </Text>
           </View>
           <View style={styles.scanTile}>
-            <Text style={[styles.scanTileNum, { color: Colors.primary }]}>{gbToReview} GB</Text>
+            <Text style={[styles.scanTileNum, { color: Colors.primary }]}>{totalVideoScanned}</Text>
             <Text variant="caption" style={styles.scanTileLabel}>
-              to review
+              Videos
             </Text>
           </View>
         </View>
