@@ -24,6 +24,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Dimensions,
   Image,
   Modal,
   Pressable,
@@ -32,7 +33,6 @@ import {
   View,
   type ViewStyle,
 } from 'react-native';
-import { Dimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   Extrapolation,
@@ -160,7 +160,6 @@ export default function SwipeScreen() {
     sessionId ? s.sessions[sessionId] : undefined,
   );
   const setSwipeSessionActive = useUIStore((s) => s.setSwipeSessionActive);
-  const skipCloudOnly = useSettingsStore((s) => s.skipCloudOnly);
 
   // ── Local state ──────────────────────────────────────────────────────────
   const [assetBuffer, setAssetBuffer] = useState<Asset[]>([]);
@@ -192,6 +191,8 @@ export default function SwipeScreen() {
 
   const lastSwipeTimeRef = useRef(0);
   const hasMarkedStartedRef = useRef(false);
+  /** Guards against handleComplete firing more than once. */
+  const hasCompletedRef = useRef(false);
 
   // ── Reanimated shared values ─────────────────────────────────────────────
   const translateX = useSharedValue(0);
@@ -316,12 +317,29 @@ export default function SwipeScreen() {
   // ── Session completion ─────────────────────────────────────────────────────
 
   const handleComplete = useCallback(() => {
+    if (hasCompletedRef.current) return;
+    hasCompletedRef.current = true;
     const sId = sessionIdRef.current;
     if (!sId) return;
     useSessionStore.getState().completeSession(sId);
     useStatsStore.getState().recordSessionCompleted();
     router.push(`/swipe/${sId}/summary` as any);
   }, [router]);
+
+  // Auto-complete: fires when buffer runs dry and the media library is exhausted.
+  // Covers the edge case where all remaining ML assets were already decided,
+  // so no further swipes occur to trigger the in-decision completion check.
+  useEffect(() => {
+    if (
+      !isLoadingInitial &&
+      assetBuffer.length === 0 &&
+      !hasNextMl &&
+      !isFetching &&
+      cursor > 0
+    ) {
+      handleComplete();
+    }
+  }, [isLoadingInitial, assetBuffer.length, hasNextMl, isFetching, cursor, handleComplete]);
 
   // ── Decision handler (stable — called via runOnJS from gesture worklet) ───
 
