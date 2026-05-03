@@ -267,6 +267,29 @@ export async function fetchAssetsPage(options?: {
 }
 
 // ---------------------------------------------------------------------------
+// Screenshot count (album-based, works on iOS + Android)
+// ---------------------------------------------------------------------------
+
+/**
+ * Return the number of screenshots in the device library.
+ *
+ * On iOS "Screenshots" is a smart album — getAlbumAsync cannot find it.
+ * We must use getAlbumsAsync with includeSmartAlbums to locate it.
+ */
+export async function getScreenshotCount(): Promise<number> {
+  try {
+    const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
+    const ssAlbum = albums.find(
+      (a) => a.title.toLowerCase() === 'screenshots'
+    );
+    if (!ssAlbum) return 0;
+    return ssAlbum.assetCount ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Single asset info with GPS
 // ---------------------------------------------------------------------------
 

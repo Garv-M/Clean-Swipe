@@ -1,13 +1,13 @@
-import React, { useEffect } from 'react';
-import { AppState } from 'react-native';
 import { Colors } from '@/constants/theme';
-import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import 'react-native-reanimated';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useRetentionScheduler } from '@/hooks/useRetentionScheduler';
 import { flushPendingWrites } from '@/store/persistence';
+import { Stack } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import React, { useEffect } from 'react';
+import { AppState } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import 'react-native-reanimated';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import '../global.css';
 
 export const unstable_settings = {
@@ -34,6 +34,7 @@ export default function RootLayout() {
         <AppShell>
           <Stack>
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="onboarding" options={{ headerShown: false }} />
             <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
           </Stack>
           <StatusBar style="light" />
