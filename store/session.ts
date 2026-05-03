@@ -137,6 +137,8 @@ export const useSessionStore = create<SessionState>()(
         set((state) => {
           const s = state.sessions[sessionId];
           if (!s) return state;
+          const bytesDeduction =
+            record.decision === Decision.DELETE_STAGED ? (record.bytes ?? 0) : 0;
           return {
             sessions: {
               ...state.sessions,
@@ -145,6 +147,7 @@ export const useSessionStore = create<SessionState>()(
                 undoStack: s.undoStack.slice(0, -1),
                 // Reference equality: record is the same object stored in decisions.
                 decisions: s.decisions.filter((d) => d !== record),
+                freedBytesEstimated: Math.max(0, s.freedBytesEstimated - bytesDeduction),
               },
             },
           };

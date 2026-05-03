@@ -21,15 +21,15 @@ import type { Asset } from '@/types';
 import { Decision } from '@/types';
 import { formatBytes } from '@/utils/format';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Dimensions,
   Image,
   Modal,
   Pressable,
   StyleSheet,
   TouchableOpacity,
+  useWindowDimensions,
   View,
   type ViewStyle,
 } from 'react-native';
@@ -49,18 +49,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 // Constants
 // ---------------------------------------------------------------------------
 
-const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
-
 const PAGE_SIZE = 200;
 const PREFETCH_THRESHOLD = 40;
-const SWIPE_X_THRESHOLD = SCREEN_W * 0.3;
-const SWIPE_Y_THRESHOLD = SCREEN_H * 0.3;
 const VELOCITY_THRESHOLD = 800;
 const SUSPICIOUS_VELOCITY = 2000;
 const SUSPICIOUS_TIME_MS = 500;
 const CARD_FLY_DURATION = 280;
-const FLY_X = SCREEN_W * 1.6;
-const FLY_Y = SCREEN_H * 1.6;
 
 // Card stack visual offsets (bottom → top order for rendering)
 const CARD_STACK = [
@@ -154,6 +148,13 @@ export default function SwipeScreen() {
   const { sessionId } = useLocalSearchParams<{ sessionId: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+
+  // ── Screen dimensions (dynamic — handles orientation/multi-window) ────────
+  const { width: SCREEN_W, height: SCREEN_H } = useWindowDimensions();
+  const SWIPE_X_THRESHOLD = SCREEN_W * 0.3;
+  const SWIPE_Y_THRESHOLD = SCREEN_H * 0.3;
+  const FLY_X = SCREEN_W * 1.6;
+  const FLY_Y = SCREEN_H * 1.6;
 
   // ── Store selectors ──────────────────────────────────────────────────────
   const session = useSessionStore((s) =>
@@ -261,6 +262,7 @@ export default function SwipeScreen() {
       const skip = useSettingsStore.getState().skipCloudOnly;
 
       const displayAssets: Asset[] = [];
+      let autoKeptCount = 0;
 
       for (const asset of result.assets) {
         // Already decided in a previous or the current session — skip display.
@@ -269,8 +271,6 @@ export default function SwipeScreen() {
         // Auto-skip cloud-only assets silently as KEEP.
         if (skip && asset.cloudOnly) {
           const now = Date.now();
-          const currentCursor =
-            useSessionStore.getState().sessions[sId]?.cursor ?? 0;
           useSessionStore.getState().recordDecision(sId, {
             assetId: asset.id,
             decision: Decision.KEEP,
@@ -279,14 +279,20 @@ export default function SwipeScreen() {
             isSuspicious: false,
           });
           useStatsStore.getState().recordReviewed();
-          useSessionStore
-            .getState()
-            .setCursor(sId, currentCursor + 1);
+          autoKeptCount++;
           continue;
         }
 
         displayAssets.push(asset);
         assetCacheRef.current[asset.id] = asset;
+      }
+
+      // Apply cursor advance once after the loop — avoids fragile per-iteration
+      // getState() reads when the loop ever becomes async.
+      if (autoKeptCount > 0) {
+        const currentCursor =
+          useSessionStore.getState().sessions[sId]?.cursor ?? 0;
+        useSessionStore.getState().setCursor(sId, currentCursor + autoKeptCount);
       }
 
       setAssetBuffer((prev) => [...prev, ...displayAssets]);
@@ -380,6 +386,9 @@ export default function SwipeScreen() {
         useTrashStore
           .getState()
           .stageForDeletion(currentAsset.id, sId, isSuspicious);
+        if (record.bytes != null) {
+          useStatsStore.getState().recordFreed(record.bytes);
+        }
       }
       if (decision === Decision.FAVORITE) {
         useStatsStore.getState().recordFavorite();
@@ -438,104 +447,118 @@ export default function SwipeScreen() {
 
   // ── Gestures ──────────────────────────────────────────────────────────────
 
-  const panGesture = Gesture.Pan()
-    .onUpdate((e) => {
-      if (isAnimating.value) return;
-      translateX.value = e.translationX;
-      translateY.value = e.translationY;
-    })
-    .onEnd((e) => {
-      if (isAnimating.value) return;
+  const panGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .onUpdate((e) => {
+          if (isAnimating.value) return;
+          translateX.value = e.translationX;
+          translateY.value = e.translationY;
+        })
+        .onEnd((e) => {
+          if (isAnimating.value) return;
 
-      const { translationX, translationY, velocityX, velocityY } = e;
-      const maxV = Math.max(Math.abs(velocityX), Math.abs(velocityY));
+          const { translationX, translationY, velocityX, velocityY } = e;
+          const maxV = Math.max(Math.abs(velocityX), Math.abs(velocityY));
 
-      let decision: Decision | null = null;
-      let targetX = 0;
-      let targetY = 0;
+          let decision: Decision | null = null;
+          let targetX = 0;
+          let targetY = 0;
 
-      // Velocity checks have priority over displacement checks
-      if (velocityX < -VELOCITY_THRESHOLD) {
-        decision = Decision.DELETE_STAGED;
-        targetX = -FLY_X;
-      } else if (velocityX > VELOCITY_THRESHOLD) {
-        decision = Decision.KEEP;
-        targetX = FLY_X;
-      } else if (velocityY < -VELOCITY_THRESHOLD) {
-        decision = Decision.FAVORITE;
-        targetY = -FLY_Y;
-      } else if (velocityY > VELOCITY_THRESHOLD) {
-        decision = Decision.SKIP_LATER;
-        targetY = FLY_Y;
-      } else if (translationX < -SWIPE_X_THRESHOLD) {
-        decision = Decision.DELETE_STAGED;
-        targetX = -FLY_X;
-      } else if (translationX > SWIPE_X_THRESHOLD) {
-        decision = Decision.KEEP;
-        targetX = FLY_X;
-      } else if (translationY < -SWIPE_Y_THRESHOLD) {
-        decision = Decision.FAVORITE;
-        targetY = -FLY_Y;
-      } else if (translationY > SWIPE_Y_THRESHOLD) {
-        decision = Decision.SKIP_LATER;
-        targetY = FLY_Y;
-      }
+          // Velocity checks have priority over displacement checks
+          if (velocityX < -VELOCITY_THRESHOLD) {
+            decision = Decision.DELETE_STAGED;
+            targetX = -FLY_X;
+          } else if (velocityX > VELOCITY_THRESHOLD) {
+            decision = Decision.KEEP;
+            targetX = FLY_X;
+          } else if (velocityY < -VELOCITY_THRESHOLD) {
+            decision = Decision.FAVORITE;
+            targetY = -FLY_Y;
+          } else if (velocityY > VELOCITY_THRESHOLD) {
+            decision = Decision.SKIP_LATER;
+            targetY = FLY_Y;
+          } else if (translationX < -SWIPE_X_THRESHOLD) {
+            decision = Decision.DELETE_STAGED;
+            targetX = -FLY_X;
+          } else if (translationX > SWIPE_X_THRESHOLD) {
+            decision = Decision.KEEP;
+            targetX = FLY_X;
+          } else if (translationY < -SWIPE_Y_THRESHOLD) {
+            decision = Decision.FAVORITE;
+            targetY = -FLY_Y;
+          } else if (translationY > SWIPE_Y_THRESHOLD) {
+            decision = Decision.SKIP_LATER;
+            targetY = FLY_Y;
+          }
 
-      if (decision !== null) {
-        isAnimating.value = true;
-        const captured = decision;
+          if (decision !== null) {
+            isAnimating.value = true;
+            const captured = decision;
 
-        if (targetX !== 0) {
-          // Horizontal fly-off; let Y drift slightly in the drag direction
-          translateX.value = withTiming(
-            targetX,
-            { duration: CARD_FLY_DURATION },
-            (finished) => {
-              if (finished) runOnJS(handleDecision)(captured, maxV);
-            },
-          );
-          translateY.value = withTiming(translationY * 0.4, {
-            duration: CARD_FLY_DURATION,
-          });
-        } else {
-          // Vertical fly-off; let X drift slightly
-          translateY.value = withTiming(
-            targetY,
-            { duration: CARD_FLY_DURATION },
-            (finished) => {
-              if (finished) runOnJS(handleDecision)(captured, maxV);
-            },
-          );
-          translateX.value = withTiming(translationX * 0.4, {
-            duration: CARD_FLY_DURATION,
-          });
-        }
-      } else {
-        // Spring back to center
-        translateX.value = withSpring(0, { damping: 20, stiffness: 200 });
-        translateY.value = withSpring(0, { damping: 20, stiffness: 200 });
-      }
-    });
+            if (targetX !== 0) {
+              // Horizontal fly-off; let Y drift slightly in the drag direction
+              translateX.value = withTiming(
+                targetX,
+                { duration: CARD_FLY_DURATION },
+                (finished) => {
+                  isAnimating.value = false; // always reset so the screen never locks up
+                  if (finished) runOnJS(handleDecision)(captured, maxV);
+                },
+              );
+              translateY.value = withTiming(translationY * 0.4, {
+                duration: CARD_FLY_DURATION,
+              });
+            } else {
+              // Vertical fly-off; let X drift slightly
+              translateY.value = withTiming(
+                targetY,
+                { duration: CARD_FLY_DURATION },
+                (finished) => {
+                  isAnimating.value = false; // always reset so the screen never locks up
+                  if (finished) runOnJS(handleDecision)(captured, maxV);
+                },
+              );
+              translateX.value = withTiming(translationX * 0.4, {
+                duration: CARD_FLY_DURATION,
+              });
+            }
+          } else {
+            // Spring back to center
+            translateX.value = withSpring(0, { damping: 20, stiffness: 200 });
+            translateY.value = withSpring(0, { damping: 20, stiffness: 200 });
+          }
+        }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [handleDecision, SWIPE_X_THRESHOLD, SWIPE_Y_THRESHOLD, FLY_X, FLY_Y],
+  );
 
-  const doubleTapGesture = Gesture.Tap()
-    .numberOfTaps(2)
-    .onEnd(() => {
-      isZoomed.value = !isZoomed.value;
-      zoomScale.value = withTiming(isZoomed.value ? 2 : 1, { duration: 250 });
-    });
+  const doubleTapGesture = useMemo(
+    () =>
+      Gesture.Tap()
+        .numberOfTaps(2)
+        .onEnd(() => {
+          isZoomed.value = !isZoomed.value;
+          zoomScale.value = withTiming(isZoomed.value ? 2 : 1, { duration: 250 });
+        }),
+    [isZoomed, zoomScale],
+  );
 
-  const longPressGesture = Gesture.LongPress()
-    .minDuration(600)
-    .onStart(() => {
-      runOnJS(handleLongPressJS)();
-    });
+  const longPressGesture = useMemo(
+    () =>
+      Gesture.LongPress()
+        .minDuration(600)
+        .onStart(() => {
+          runOnJS(handleLongPressJS)();
+        }),
+    [handleLongPressJS],
+  );
 
   // Exclusive: first gesture to activate wins.
   // Double-tap wins over long-press over pan (natural priority — no conflicts).
-  const composedGesture = Gesture.Exclusive(
-    doubleTapGesture,
-    longPressGesture,
-    panGesture,
+  const composedGesture = useMemo(
+    () => Gesture.Exclusive(doubleTapGesture, longPressGesture, panGesture),
+    [doubleTapGesture, longPressGesture, panGesture],
   );
 
   // ── Animated styles ───────────────────────────────────────────────────────
