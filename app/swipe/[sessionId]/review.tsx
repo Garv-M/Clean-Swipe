@@ -22,14 +22,14 @@ import { formatBytes } from '@/utils/format';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Animated,
-  ActivityIndicator,
-  FlatList,
-  Image,
-  StyleSheet,
-  TouchableOpacity,
-  useWindowDimensions,
-  View,
+    ActivityIndicator,
+    Animated,
+    FlatList,
+    Image,
+    StyleSheet,
+    TouchableOpacity,
+    useWindowDimensions,
+    View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 

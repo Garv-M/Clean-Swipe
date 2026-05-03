@@ -23,25 +23,25 @@ import { formatBytes } from '@/utils/format';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Image,
-  Modal,
-  Pressable,
-  StyleSheet,
-  TouchableOpacity,
-  useWindowDimensions,
-  View,
-  type ViewStyle,
+    ActivityIndicator,
+    Image,
+    Modal,
+    Pressable,
+    StyleSheet,
+    TouchableOpacity,
+    useWindowDimensions,
+    View,
+    type ViewStyle,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
-  Extrapolation,
-  interpolate,
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  withTiming,
+    Extrapolation,
+    interpolate,
+    runOnJS,
+    useAnimatedStyle,
+    useSharedValue,
+    withSpring,
+    withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
