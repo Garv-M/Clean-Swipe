@@ -6,25 +6,11 @@ import { useClusterStore } from '@/store/cluster';
 import { useSessionStore } from '@/store/session';
 import { useUIStore } from '@/store/ui';
 import { Decision } from '@/types';
+import { formatBytes } from '@/utils/format';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-// ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
-
-/**
- * Format a byte count into a human-readable string.
- * e.g. 1_500_000 → "1 MB", 2_300_000_000 → "2.1 GB"
- */
-function formatBytes(bytes: number): string {
-  if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`;
-  if (bytes >= 1_048_576) return `${Math.round(bytes / 1_048_576)} MB`;
-  if (bytes >= 1_024) return `${Math.round(bytes / 1_024)} KB`;
-  return `${bytes} B`;
-}
 
 // ---------------------------------------------------------------------------
 // Sub-component: single stat column inside the info card
@@ -113,7 +99,7 @@ export default function SessionStartScreen() {
     .filter((d) => d.decision === Decision.DELETE_STAGED)
     .reduce((acc, d) => acc + (d.bytes ?? 0), 0);
   const savingsBytes =
-    (cluster?.estimatedBytes ?? 0) > 0 ? cluster!.estimatedBytes : stagedBytes;
+    cluster && cluster.estimatedBytes > 0 ? cluster.estimatedBytes : stagedBytes;
   const savingsLabel = savingsBytes > 0 ? formatBytes(savingsBytes) : '—';
 
   // ── Handlers ─────────────────────────────────────────────────────────────
@@ -122,7 +108,7 @@ export default function SessionStartScreen() {
     // Navigate to the swipe screen within the same [sessionId] directory.
     // The target file (../swipe) is created in a subsequent task; the cast
     // suppresses the typed-routes compile error for this forward reference.
-    router.push('../swipe' as any);
+    router.push(`/swipe/${sessionId}/swipe` as any);
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
