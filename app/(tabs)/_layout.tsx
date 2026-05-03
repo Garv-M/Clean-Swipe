@@ -4,10 +4,12 @@ import React from 'react';
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
+import { useTrashStore } from '@/store/trash';
 import { useUIStore } from '@/store/ui';
 
 export default function TabLayout() {
   const isSwipeSessionActive = useUIStore((state) => state.isSwipeSessionActive);
+  const stagedCount = useTrashStore((s) => s.staged.length);
 
   return (
     <Tabs
@@ -40,6 +42,7 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => (
             <IconSymbol size={26} name="trash.fill" color={color} />
           ),
+          tabBarBadge: stagedCount > 0 ? stagedCount : undefined,
         }}
       />
       <Tabs.Screen

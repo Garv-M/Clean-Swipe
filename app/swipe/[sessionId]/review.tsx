@@ -20,8 +20,9 @@ import { useUIStore } from '@/store/ui';
 import type { Asset } from '@/types';
 import { formatBytes } from '@/utils/format';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Animated,
   ActivityIndicator,
   FlatList,
   Image,
@@ -145,6 +146,13 @@ export default function ReviewScreen() {
    */
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
+  /**
+   * Celebration state: set after confirmDeletion is called.
+   * Shows a brief success overlay before navigating home.
+   */
+  const [celebration, setCelebration] = useState<{ count: number; bytes: number } | null>(null);
+  const celebrationScale = useRef(new Animated.Value(0)).current;
+
   // ── On mount: restore tab bar ────────────────────────────────────────────
   useEffect(() => {
     setSwipeSessionActive(false);
@@ -203,6 +211,18 @@ export default function ReviewScreen() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally once — sessionId is stable within this screen mount
+
+  // ── Celebration spring animation ─────────────────────────────────────────
+  useEffect(() => {
+    if (!celebration) return;
+    celebrationScale.setValue(0);
+    Animated.spring(celebrationScale, {
+      toValue: 1,
+      tension: 100,
+      friction: 7,
+      useNativeDriver: true,
+    }).start();
+  }, [celebration, celebrationScale]);
 
   // ── Derived values ───────────────────────────────────────────────────────
 
@@ -268,12 +288,19 @@ export default function ReviewScreen() {
 
   const handleDelete = useCallback(() => {
     if (selectedIds.size === 0) return;
+    // Capture summary before confirmDeletion clears the staged list.
+    const count = selectedCount;
+    const bytes = totalBytes;
     // Move staged → confirmed; DeletionService handles the actual OS deletion.
     useTrashStore
       .getState()
       .confirmDeletion(Array.from(selectedIds), retentionDays);
-    router.replace('/(tabs)/' as any);
-  }, [selectedIds, retentionDays, router]);
+    // Show celebration overlay for 1 second, then navigate home.
+    setCelebration({ count, bytes });
+    setTimeout(() => {
+      router.replace('/(tabs)/' as any);
+    }, 1000);
+  }, [selectedIds, selectedCount, totalBytes, retentionDays, router]);
 
   // ── Loading state ─────────────────────────────────────────────────────────
 
@@ -401,6 +428,29 @@ export default function ReviewScreen() {
           style={styles.deleteButton}
         />
       </View>
+
+      {/* ── Celebration overlay (shown for 1 s after deletion) ── */}
+      {celebration && (
+        <View style={[StyleSheet.absoluteFill, styles.celebrationOverlay]}>
+          <Animated.View
+            style={[
+              styles.celebrationCard,
+              { transform: [{ scale: celebrationScale }] },
+            ]}
+          >
+            <Text variant="title" style={styles.celebrationEmoji}>🎉</Text>
+            <Text variant="heading" style={styles.celebrationTitle}>
+              {celebration.count}{' '}
+              {celebration.count === 1 ? 'photo' : 'photos'} deleted!
+            </Text>
+            {celebration.bytes > 0 && (
+              <Text variant="label" style={styles.celebrationSub}>
+                {formatBytes(celebration.bytes)} freed
+              </Text>
+            )}
+          </Animated.View>
+        </View>
+      )}
     </View>
   );
 }
@@ -536,5 +586,35 @@ const styles = StyleSheet.create({
   },
   deleteButton: {
     width: '100%',
+  },
+
+  // ── Celebration overlay ───────────────────────────────────────────────────
+  celebrationOverlay: {
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  celebrationCard: {
+    backgroundColor: '#283548',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    paddingHorizontal: 40,
+    paddingVertical: 36,
+    alignItems: 'center',
+    gap: 8,
+  },
+  celebrationEmoji: {
+    fontSize: 48,
+    lineHeight: 56,
+    textAlign: 'center',
+  },
+  celebrationTitle: {
+    color: '#22C55E',
+    textAlign: 'center',
+  },
+  celebrationSub: {
+    color: 'rgba(255,255,255,0.45)',
+    textAlign: 'center',
   },
 });
