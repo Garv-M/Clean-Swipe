@@ -14,18 +14,19 @@ import { Button } from '@/components/ui/button';
 import { Text } from '@/components/ui/text';
 import { Colors } from '@/constants/theme';
 import { getAssetInfo } from '@/services/mediaLibrary';
+import { executeDelete } from '@/services/deletion';
 import { useSettingsStore } from '@/store/settings';
 import { useTrashStore } from '@/store/trash';
 import { useUIStore } from '@/store/ui';
 import type { Asset } from '@/types';
 import { formatBytes } from '@/utils/format';
+import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Animated,
     FlatList,
-    Image,
     StyleSheet,
     TouchableOpacity,
     useWindowDimensions,
@@ -81,9 +82,9 @@ function PhotoTile({ item, isSelected, size, onPress }: PhotoTileProps) {
     >
       {item.asset?.uri ? (
         <Image
-          source={{ uri: item.asset.uri }}
+          source={item.asset.uri}
           style={StyleSheet.absoluteFill}
-          resizeMode="cover"
+          contentFit="cover"
         />
       ) : (
         <View style={[StyleSheet.absoluteFill, styles.tilePlaceholder]} />
@@ -286,21 +287,33 @@ export default function ReviewScreen() {
     setSelectedIds(new Set<string>());
   }, [selectedIds]);
 
-  const handleDelete = useCallback(() => {
+  const handleDelete = useCallback(async () => {
     if (selectedIds.size === 0) return;
-    // Capture summary before confirmDeletion clears the staged list.
     const count = selectedCount;
     const bytes = totalBytes;
-    // Move staged → confirmed; DeletionService handles the actual OS deletion.
+    const idsToDelete = Array.from(selectedIds);
+
+    // Build a bytes map for accurate freed-storage accounting.
+    const bytesMap: Record<string, number> = {};
+    for (const item of reviewItems) {
+      if (selectedIds.has(item.assetId) && item.asset?.bytes != null) {
+        bytesMap[item.assetId] = item.asset.bytes;
+      }
+    }
+
+    // Move staged → confirmed in the store.
     useTrashStore
       .getState()
-      .confirmDeletion(Array.from(selectedIds), retentionDays);
-    // Show celebration overlay for 1 second, then navigate home.
+      .confirmDeletion(idsToDelete, retentionDays);
+
+    // Actually delete from the device media library.
+    await executeDelete(idsToDelete, bytesMap);
+
     setCelebration({ count, bytes });
     setTimeout(() => {
       router.replace('/(tabs)/' as any);
     }, 1000);
-  }, [selectedIds, selectedCount, totalBytes, retentionDays, router]);
+  }, [selectedIds, selectedCount, totalBytes, reviewItems, retentionDays, router]);
 
   // ── Loading state ─────────────────────────────────────────────────────────
 

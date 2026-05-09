@@ -11,37 +11,36 @@ import { Button } from '@/components/ui/button';
 import { ProgressBar } from '@/components/ui/progress-bar';
 import { Text } from '@/components/ui/text';
 import { Colors } from '@/constants/theme';
-import { fetchAssetsPage } from '@/services/mediaLibrary';
+import { getAssetsByIds } from '@/services/mediaLibrary';
 import { useSessionStore } from '@/store/session';
-import { useSettingsStore } from '@/store/settings';
 import { useStatsStore } from '@/store/stats';
 import { useTrashStore } from '@/store/trash';
 import { useUIStore } from '@/store/ui';
 import type { Asset } from '@/types';
 import { Decision } from '@/types';
 import { formatBytes } from '@/utils/format';
+import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Image,
-    Modal,
-    Pressable,
-    StyleSheet,
-    TouchableOpacity,
-    useWindowDimensions,
-    View,
-    type ViewStyle,
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  StyleSheet,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
+  type ViewStyle,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
-    Extrapolation,
-    interpolate,
-    runOnJS,
-    useAnimatedStyle,
-    useSharedValue,
-    withSpring,
-    withTiming,
+  Extrapolation,
+  interpolate,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -164,8 +163,7 @@ export default function SwipeScreen() {
 
   // ── Local state ──────────────────────────────────────────────────────────
   const [assetBuffer, setAssetBuffer] = useState<Asset[]>([]);
-  const [mlEndCursor, setMlEndCursor] = useState<string | undefined>(undefined);
-  const [hasNextMl, setHasNextMl] = useState(true);
+  const [hasNextPage, setHasNextPage] = useState(true);
   const [isFetching, setIsFetching] = useState(false);
   const [isLoadingInitial, setIsLoadingInitial] = useState(true);
   const [metadataAsset, setMetadataAsset] = useState<Asset | null>(null);
@@ -178,14 +176,14 @@ export default function SwipeScreen() {
   const assetBufferRef = useRef<Asset[]>([]);
   assetBufferRef.current = assetBuffer;
 
-  const hasNextMlRef = useRef(hasNextMl);
-  hasNextMlRef.current = hasNextMl;
-
-  const mlEndCursorRef = useRef<string | undefined>(mlEndCursor);
-  mlEndCursorRef.current = mlEndCursor;
+  const hasNextPageRef = useRef(hasNextPage);
+  hasNextPageRef.current = hasNextPage;
 
   const isFetchingRef = useRef(isFetching);
   isFetchingRef.current = isFetching;
+
+  /** Index into queueIds — tracks how far we've loaded from the session queue. */
+  const queueOffsetRef = useRef(0);
 
   /** Cache of every asset ever loaded — used to restore cards after undo. */
   const assetCacheRef = useRef<Record<string, Asset>>({});
@@ -201,11 +199,11 @@ export default function SwipeScreen() {
   const isAnimating = useSharedValue(false);
   const zoomScale = useSharedValue(1);
   const isZoomed = useSharedValue(false);
+  const cardOpacity = useSharedValue(1);
 
   // ── Progress ─────────────────────────────────────────────────────────────
   const cursor = session?.cursor ?? 0;
-  // total = decisions made so far + cards left in buffer. Grows as we fetch more.
-  const total = cursor + assetBuffer.length;
+  const total = session?.queueIds.length ?? 0;
 
   // ── Mount / unmount ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -220,91 +218,79 @@ export default function SwipeScreen() {
     }
   }, [assetBuffer]);
 
-  // Reset card animation values when the top card changes
-  const prevTopIdRef = useRef<string | undefined>(undefined);
+  // Reset shared values after React has swapped the top card out of the tree.
+  const prevTopIdRef = useRef(assetBuffer[0]?.id);
   useEffect(() => {
-    const newTopId = assetBuffer[0]?.id;
-    if (newTopId !== prevTopIdRef.current) {
-      prevTopIdRef.current = newTopId;
+    const topId = assetBuffer[0]?.id;
+    if (topId !== prevTopIdRef.current) {
+      prevTopIdRef.current = topId;
       translateX.value = 0;
       translateY.value = 0;
       zoomScale.value = 1;
       isZoomed.value = false;
       isAnimating.value = false;
+      cardOpacity.value = 1;
     }
-  }, [assetBuffer, translateX, translateY, zoomScale, isZoomed, isAnimating]);
+  }, [assetBuffer, translateX, translateY, zoomScale, isZoomed, isAnimating, cardOpacity]);
 
   // ── Media-library fetch ───────────────────────────────────────────────────
 
   /**
-   * Fetch the next page from the media library.
+   * Fetch the next batch of assets from the session's queueIds.
    * Filters out already-decided assets.
-   * Auto-records KEEP for cloud-only assets when skipCloudOnly is enabled.
    * Stable — reads live state via refs and store.getState().
    */
   const loadNextPage = useCallback(async () => {
-    if (isFetchingRef.current || !hasNextMlRef.current) return;
+    if (isFetchingRef.current || !hasNextPageRef.current) return;
+    isFetchingRef.current = true;
 
     const sId = sessionIdRef.current;
-    if (!sId) return;
+    if (!sId) {
+      isFetchingRef.current = false;
+      return;
+    }
 
     setIsFetching(true);
     try {
-      const result = await fetchAssetsPage({
-        after: mlEndCursorRef.current,
-        first: PAGE_SIZE,
-      });
-
       const storeSession = useSessionStore.getState().sessions[sId];
       if (!storeSession) return;
 
-      const decidedIds = new Set(storeSession.decisions.map((d) => d.assetId));
-      const skip = useSettingsStore.getState().skipCloudOnly;
+      const { queueIds } = storeSession;
+      const offset = queueOffsetRef.current;
+
+      if (offset >= queueIds.length) {
+        setHasNextPage(false);
+        return;
+      }
+
+      const batch = queueIds.slice(offset, offset + PAGE_SIZE);
+      queueOffsetRef.current = offset + batch.length;
+
+      if (offset + batch.length >= queueIds.length) {
+        setHasNextPage(false);
+      }
+
+      const assets = await getAssetsByIds(batch);
+
+      const decidedIds = new Set(
+        useSessionStore.getState().sessions[sId]?.decisions.map((d) => d.assetId) ?? [],
+      );
 
       const displayAssets: Asset[] = [];
-      let autoKeptCount = 0;
-
-      for (const asset of result.assets) {
-        // Already decided in a previous or the current session — skip display.
+      for (const asset of assets) {
         if (decidedIds.has(asset.id)) continue;
-
-        // Auto-skip cloud-only assets silently as KEEP.
-        if (skip && asset.cloudOnly) {
-          const now = Date.now();
-          useSessionStore.getState().recordDecision(sId, {
-            assetId: asset.id,
-            decision: Decision.KEEP,
-            timestamp: now,
-            sessionId: sId,
-            isSuspicious: false,
-          });
-          useStatsStore.getState().recordReviewed();
-          autoKeptCount++;
-          continue;
-        }
-
         displayAssets.push(asset);
         assetCacheRef.current[asset.id] = asset;
       }
 
-      // Apply cursor advance once after the loop — avoids fragile per-iteration
-      // getState() reads when the loop ever becomes async.
-      if (autoKeptCount > 0) {
-        const currentCursor =
-          useSessionStore.getState().sessions[sId]?.cursor ?? 0;
-        useSessionStore.getState().setCursor(sId, currentCursor + autoKeptCount);
-      }
-
       setAssetBuffer((prev) => [...prev, ...displayAssets]);
-      setMlEndCursor(result.endCursor);
-      setHasNextMl(result.hasNextPage);
     } catch (err) {
-      if (__DEV__) console.warn('[SwipeScreen] fetchAssetsPage failed', err);
+      if (__DEV__) console.warn('[SwipeScreen] loadNextPage failed', err);
     } finally {
       setIsFetching(false);
       setIsLoadingInitial(false);
     }
-  }, []); // intentionally stable — all mutable state accessed via refs
+  }, []);
 
   // Initial load
   useEffect(() => {
@@ -315,10 +301,10 @@ export default function SwipeScreen() {
 
   // Prefetch: keep buffer well-stocked
   useEffect(() => {
-    if (assetBuffer.length < PREFETCH_THRESHOLD && hasNextMl && !isFetching) {
+    if (assetBuffer.length < PREFETCH_THRESHOLD && hasNextPage && !isFetching) {
       loadNextPage();
     }
-  }, [assetBuffer.length, hasNextMl, isFetching, loadNextPage]);
+  }, [assetBuffer.length, hasNextPage, isFetching, loadNextPage]);
 
   // ── Session completion ─────────────────────────────────────────────────────
 
@@ -339,13 +325,13 @@ export default function SwipeScreen() {
     if (
       !isLoadingInitial &&
       assetBuffer.length === 0 &&
-      !hasNextMl &&
+      !hasNextPage &&
       !isFetching &&
       cursor > 0
     ) {
       handleComplete();
     }
-  }, [isLoadingInitial, assetBuffer.length, hasNextMl, isFetching, cursor, handleComplete]);
+  }, [isLoadingInitial, assetBuffer.length, hasNextPage, isFetching, cursor, handleComplete]);
 
   // ── Decision handler (stable — called via runOnJS from gesture worklet) ───
 
@@ -399,12 +385,12 @@ export default function SwipeScreen() {
         (useSessionStore.getState().sessions[sId]?.cursor ?? 0) + 1;
       useSessionStore.getState().setCursor(sId, newCursor);
 
-      // Advance buffer — the useEffect will reset translation values
+      // Advance buffer — useEffect resets shared values after React removes the old card
       setAssetBuffer((prev) => prev.slice(1));
 
       // Check completion
       const remainingAfter = buffer.slice(1);
-      if (remainingAfter.length === 0 && !hasNextMlRef.current) {
+      if (remainingAfter.length === 0 && !hasNextPageRef.current) {
         handleComplete();
       }
     },
@@ -428,7 +414,6 @@ export default function SwipeScreen() {
       useSessionStore.getState().sessions[sId]?.cursor ?? 0;
     useSessionStore.getState().setCursor(sId, Math.max(0, currentCursor - 1));
 
-    // Restore asset to front of display buffer
     const cachedAsset = assetCacheRef.current[record.assetId];
     if (cachedAsset) {
       setAssetBuffer((prev) => [cachedAsset, ...prev]);
@@ -502,8 +487,11 @@ export default function SwipeScreen() {
                 targetX,
                 { duration: CARD_FLY_DURATION },
                 (finished) => {
-                  isAnimating.value = false; // always reset so the screen never locks up
-                  if (finished) runOnJS(handleDecision)(captured, maxV);
+                  isAnimating.value = false;
+                  if (finished) {
+                    cardOpacity.value = 0;
+                    runOnJS(handleDecision)(captured, maxV);
+                  }
                 },
               );
               translateY.value = withTiming(translationY * 0.4, {
@@ -515,8 +503,11 @@ export default function SwipeScreen() {
                 targetY,
                 { duration: CARD_FLY_DURATION },
                 (finished) => {
-                  isAnimating.value = false; // always reset so the screen never locks up
-                  if (finished) runOnJS(handleDecision)(captured, maxV);
+                  isAnimating.value = false;
+                  if (finished) {
+                    cardOpacity.value = 0;
+                    runOnJS(handleDecision)(captured, maxV);
+                  }
                 },
               );
               translateX.value = withTiming(translationX * 0.4, {
@@ -569,6 +560,7 @@ export default function SwipeScreen() {
       { translateY: translateY.value },
       { scale: zoomScale.value },
     ],
+    opacity: cardOpacity.value,
   }));
 
   // Overlays — proportional to drag, only the dominant axis is shown.
@@ -668,14 +660,16 @@ export default function SwipeScreen() {
           { paddingTop: insets.top, paddingBottom: insets.bottom },
         ]}
       >
-        <Text variant="heading">All done!</Text>
+        <Text variant="heading">{cursor > 0 ? 'All done!' : 'No photos to review'}</Text>
         <Text variant="label" style={styles.loadingText}>
-          You reviewed all the photos in this session.
+          {cursor > 0
+            ? 'You reviewed all the photos in this session.'
+            : 'There are no photos available to review in this group.'}
         </Text>
         <Button
           variant="primary"
-          label="See Summary"
-          onPress={handleComplete}
+          label={cursor > 0 ? 'See Summary' : 'Go Back'}
+          onPress={cursor > 0 ? handleComplete : () => router.back()}
           style={styles.centeredButton}
         />
       </View>
@@ -725,7 +719,7 @@ export default function SwipeScreen() {
         {/* Third card (visually behind) */}
         {thirdAsset && (
           <StaticCard
-            uri={thirdAsset.uri}
+            asset={thirdAsset}
             style={{
               transform: [
                 { scale: CARD_STACK[0].scale },
@@ -738,7 +732,7 @@ export default function SwipeScreen() {
         {/* Second card */}
         {nextAsset && (
           <StaticCard
-            uri={nextAsset.uri}
+            asset={nextAsset}
             style={{
               transform: [
                 { scale: CARD_STACK[1].scale },
@@ -752,10 +746,12 @@ export default function SwipeScreen() {
         <GestureDetector gesture={composedGesture}>
           <Animated.View style={[styles.card, topCardStyle]}>
             <Image
-              source={{ uri: currentAsset.uri }}
+              source={currentAsset.localUri ?? currentAsset.uri}
               style={styles.cardImage}
-              resizeMode="cover"
+              contentFit="contain"
             />
+
+            {currentAsset.kind === 'video' && <VideoBadge />}
 
             {/* Directional overlays */}
             <Animated.View
@@ -820,10 +816,23 @@ export default function SwipeScreen() {
 // StaticCard — non-interactive background card
 // ---------------------------------------------------------------------------
 
-function StaticCard({ uri, style }: { uri: string; style?: ViewStyle }) {
+function StaticCard({ asset, style }: { asset: Asset; style?: ViewStyle }) {
   return (
     <View style={[styles.card, style]}>
-      <Image source={{ uri }} style={styles.cardImage} resizeMode="cover" />
+      <Image source={asset.localUri ?? asset.uri} style={styles.cardImage} contentFit="cover" />
+      {asset.kind === 'video' && <VideoBadge />}
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// VideoBadge — play icon overlay for video assets
+// ---------------------------------------------------------------------------
+
+function VideoBadge() {
+  return (
+    <View style={styles.videoBadge}>
+      <Text variant="label" style={styles.videoBadgeText}>▶</Text>
     </View>
   );
 }
@@ -896,7 +905,7 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 20,
     overflow: 'hidden',
-    backgroundColor: Colors.cardFrom,
+    backgroundColor: '#000000',
     // Elevation / shadow
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
@@ -907,6 +916,23 @@ const styles = StyleSheet.create({
   cardImage: {
     width: '100%',
     height: '100%',
+  },
+
+  // ── Video badge ───────────────────────────────────────────────────────────
+  videoBadge: {
+    position: 'absolute',
+    bottom: 12,
+    left: 12,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  videoBadgeText: {
+    fontSize: 12,
+    color: '#FFFFFF',
   },
 
   // ── Overlays ───────────────────────────────────────────────────────────────
