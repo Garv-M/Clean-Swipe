@@ -101,10 +101,15 @@ function mapPageAsset(raw: RuntimeAsset): Asset {
  * type, including GPS coordinates when the EXIF data contains them.
  */
 function mapAssetInfo(raw: RuntimeAssetInfo): Asset {
-  const location =
-    raw.location != null
-      ? { lat: raw.location.latitude, lng: raw.location.longitude }
-      : undefined;
+  let location: { lat: number; lng: number } | undefined;
+  if (raw.location != null) {
+    const loc = raw.location as any;
+    const lat = parseFloat(loc.latitude ?? loc.lat);
+    const lng = parseFloat(loc.longitude ?? loc.lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      location = { lat, lng };
+    }
+  }
 
   return {
     id: raw.id,
@@ -420,4 +425,70 @@ export async function deleteAssets(assetIds: string[]): Promise<DeletionResult> 
   }
 
   return { deleted, failed };
+}
+
+// ---------------------------------------------------------------------------
+// Batch GPS fetch
+// ---------------------------------------------------------------------------
+
+export async function batchFetchGPS(
+  assets: Asset[],
+  chunkSize = 50,
+): Promise<Asset[]> {
+  const t0 = Date.now();
+  let found = 0;
+  let errors = 0;
+  let locInspected = 0;
+
+  for (let i = 0; i < assets.length; i += chunkSize) {
+    const chunk = assets.slice(i, i + chunkSize);
+    const results = await Promise.all(
+      chunk.map(async (asset) => {
+        try {
+          const info = await MediaLibrary.getAssetInfoAsync(asset.id, {
+            shouldDownloadFromNetwork: false,
+          });
+          const raw = info as RuntimeAssetInfo;
+
+          if (raw.location != null) {
+            if (__DEV__ && locInspected < 5) {
+              locInspected++;
+              const loc = raw.location as any;
+              console.log(`[GPS-shape] ${asset.filename}: keys=${JSON.stringify(Object.keys(loc))}, value=${JSON.stringify(loc)}`);
+            }
+
+            const loc = raw.location as any;
+            const lat = parseFloat(loc.latitude ?? loc.lat);
+            const lng = parseFloat(loc.longitude ?? loc.lng ?? loc.lon);
+            if (Number.isFinite(lat) && Number.isFinite(lng)) {
+              return { id: asset.id, location: { lat, lng } };
+            }
+          }
+        } catch {
+          errors++;
+        }
+        return null;
+      }),
+    );
+
+    for (const result of results) {
+      if (result) {
+        found++;
+        const target = assets.find((a) => a.id === result.id);
+        if (target) {
+          (target as { location?: Asset['location'] }).location = result.location;
+        }
+      }
+    }
+
+    if (__DEV__ && (i + chunkSize) % 500 === 0) {
+      console.log(`[GPS] progress: ${Math.min(i + chunkSize, assets.length)}/${assets.length} checked, ${found} with GPS`);
+    }
+  }
+
+  if (__DEV__) {
+    console.log(`[GPS] done in ${((Date.now() - t0) / 1000).toFixed(1)}s — ${found}/${assets.length} have GPS (${errors} errors)`);
+  }
+
+  return assets;
 }

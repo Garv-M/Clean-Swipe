@@ -2,7 +2,7 @@ import { Button } from '@/components/ui/button';
 import { Text } from '@/components/ui/text';
 import { Colors } from '@/constants/theme';
 import { clusterAssets } from '@/services/clustering';
-import { fetchAssetsPage, getScreenshotCount, requestPermissions } from '@/services/mediaLibrary';
+import { batchFetchGPS, fetchAssetsPage, getScreenshotCount, requestPermissions } from '@/services/mediaLibrary';
 import { useClusterStore } from '@/store/cluster';
 import { useSettingsStore } from '@/store/settings';
 import type { Asset } from '@/types';
@@ -11,13 +11,13 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Dimensions, Linking, StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
-  Extrapolate,
-  interpolate,
-  runOnJS,
-  SharedValue,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
+    Extrapolate,
+    interpolate,
+    runOnJS,
+    SharedValue,
+    useAnimatedStyle,
+    useSharedValue,
+    withSpring,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -215,9 +215,9 @@ function PermissionsStep({ onGranted }: { onGranted: () => void }) {
 // ─── ScanStep ────────────────────────────────────────────────────────────────
 
 const STATUS_MESSAGES = [
-  'Analyzing your library...',
-  'Extracting GPS data...',
-  'Grouping into sessions...',
+  'Scanning your library...',
+  'Extracting locations...',
+  'Building clusters...',
   'Almost ready...',
 ];
 const MIN_DISPLAY_MS = 3500;
@@ -242,24 +242,16 @@ function ScanStep({ onComplete }: { onComplete: () => void }) {
     let displayTimer: ReturnType<typeof setTimeout> | undefined;
     const allAssets: Asset[] = [];
 
-    const fetchWithTimeout = (opts: Parameters<typeof fetchAssetsPage>[0]) =>
-      Promise.race([
-        fetchAssetsPage(opts),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('timeout')), 15000)
-        ),
-      ]);
-
     const run = async () => {
       setScanning(true);
+      if (__DEV__) console.log('[Scan] ⏱ started');
       let cursor: string | undefined;
       let hasMore = true;
-      let firstPage = true;
 
       const screenshotCountPromise = getScreenshotCount();
 
       while (hasMore) {
-        const page = await fetchWithTimeout({ after: cursor, first: 100 });
+        const page = await fetchAssetsPage({ after: cursor, first: 100 });
         if (cancelled) return;
         if (page.assets.length === 0) break;
         allAssets.push(...page.assets);
@@ -267,10 +259,6 @@ function ScanStep({ onComplete }: { onComplete: () => void }) {
         hasMore = page.hasNextPage && cursor != null;
         setPhotoScanned(allAssets.filter((a) => a.kind === 'photo').length);
         setVideoScanned(allAssets.filter((a) => a.kind === 'video').length);
-        if (firstPage) {
-          firstPage = false;
-          setStatusIdx(1);
-        }
       }
 
       if (cancelled) return;
@@ -278,25 +266,45 @@ function ScanStep({ onComplete }: { onComplete: () => void }) {
       const ssCount = await screenshotCountPromise;
       if (!cancelled) setScreenshotsFound(ssCount);
 
+      const fetchDone = Date.now();
+      if (__DEV__) console.log(`[Scan] ⏱ fetch done: ${allAssets.length} assets in ${((fetchDone - startTime) / 1000).toFixed(1)}s`);
+
+      setStatusIdx(1);
+      await batchFetchGPS(allAssets);
+      if (cancelled) return;
+
+      const gpsDone = Date.now();
+      if (__DEV__) {
+        const withGPS = allAssets.filter((a) => a.location != null).length;
+        console.log(`[Scan] ⏱ GPS done: ${withGPS}/${allAssets.length} have coords in ${((gpsDone - fetchDone) / 1000).toFixed(1)}s`);
+      }
+
       setStatusIdx(2);
-      const clusters = clusterAssets(allAssets);
+      const clusters = await clusterAssets(allAssets, {
+        onProgress: (_phase, percent) => {
+          if (percent >= 0.8 && !cancelled) setStatusIdx(3);
+        },
+      });
       setClusters(clusters);
+
+      const clusterDone = Date.now();
 
       const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
       const tripClusters = clusters.filter(
-        (c) => c.source == null && (c.dateRange.to - c.dateRange.from) > TWO_DAYS_MS
+        (c) => (c.dateRange.to - c.dateRange.from) > TWO_DAYS_MS,
       );
       if (__DEV__) {
         const photos = allAssets.filter((a) => a.kind === 'photo').length;
         const videos = allAssets.filter((a) => a.kind === 'video').length;
-        const withBytes = allAssets.filter((a) => a.bytes).length;
+        const named = clusters.filter((c) => c.locationName).length;
+        console.log(`[Scan] ⏱ clustering done in ${((clusterDone - gpsDone) / 1000).toFixed(1)}s`);
         console.log(`[Scan] ${allAssets.length} assets (${photos} photos, ${videos} videos)`);
-        console.log(`[Scan] ${clusters.length} sessions, ${tripClusters.length} trips:`);
+        console.log(`[Scan] ${clusters.length} sessions (${named} with location names), ${tripClusters.length} trips`);
         tripClusters.forEach((t) => console.log(`  → ${t.name} (${t.assetCount} assets)`));
+        console.log(`[Scan] ⏱ TOTAL: ${((clusterDone - startTime) / 1000).toFixed(1)}s (fetch ${((fetchDone - startTime) / 1000).toFixed(1)}s + GPS ${((gpsDone - fetchDone) / 1000).toFixed(1)}s + cluster ${((clusterDone - gpsDone) / 1000).toFixed(1)}s)`);
       }
       setTripsFound(tripClusters.length);
-      setSessionCount(tripClusters.length);
-      setStatusIdx(3);
+      setSessionCount(clusters.length);
 
       const elapsed = Date.now() - startTime;
       const delay = Math.max(0, MIN_DISPLAY_MS - elapsed);
@@ -305,18 +313,18 @@ function ScanStep({ onComplete }: { onComplete: () => void }) {
       }, delay);
     };
 
-    run().catch(() => {
+    run().catch(async (err) => {
+      if (__DEV__) console.error('[Scan] run() crashed:', err);
       if (cancelled) return;
       if (allAssets.length > 0) {
-        const clusters = clusterAssets(allAssets);
+        const clusters = await clusterAssets(allAssets);
         setClusters(clusters);
         const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
-        setTripsFound(
-          clusters.filter((c) => c.source == null && (c.dateRange.to - c.dateRange.from) > TWO_DAYS_MS).length
-        );
-        setSessionCount(
-          clusters.filter((c) => c.source == null && (c.dateRange.to - c.dateRange.from) > TWO_DAYS_MS).length
-        );
+        const tripCount = clusters.filter(
+          (c) => (c.dateRange.to - c.dateRange.from) > TWO_DAYS_MS,
+        ).length;
+        setTripsFound(tripCount);
+        setSessionCount(clusters.length);
         setStatusIdx(3);
         setScanDone(true);
       } else {

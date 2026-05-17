@@ -208,8 +208,9 @@ export interface EventCluster {
   location?: GeoPoint;
 
   /**
-   * Content origin hint surfaced to the user.
-   * Examples: 'WhatsApp', 'Screenshots', 'Camera', 'Instagram'
+   * Resolved city/country name from offline reverse geocoding.
+   * Example: "Hamburg, DE"
+   * Undefined when no GPS data was available for this cluster.
    */
-  source?: string;
+  locationName?: string;
 }
