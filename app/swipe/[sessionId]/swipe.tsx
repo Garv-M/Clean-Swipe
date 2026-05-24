@@ -145,6 +145,7 @@ interface SwipeCardProps {
   onLongPress: () => void;
   screenW: number;
   screenH: number;
+  entryFrom?: { x: number; y: number };
 }
 
 function SwipeCard({
@@ -154,6 +155,7 @@ function SwipeCard({
   onLongPress,
   screenW,
   screenH,
+  entryFrom,
 }: SwipeCardProps) {
   const SWIPE_X_THRESHOLD = screenW * 0.3;
   const SWIPE_Y_THRESHOLD = screenH * 0.3;
@@ -172,9 +174,20 @@ function SwipeCard({
   }, [stackIndex, cardScale, cardOffsetY]);
 
   // Pan gesture values (only meaningful for top card, always 0 for others)
-  const panX = useSharedValue(0);
-  const panY = useSharedValue(0);
-  const isAnimating = useSharedValue(false);
+  const panX = useSharedValue(entryFrom?.x ?? 0);
+  const panY = useSharedValue(entryFrom?.y ?? 0);
+  const isAnimating = useSharedValue(!!entryFrom);
+
+  // Undo entry animation: spring back from the fly-off position
+  useEffect(() => {
+    if (entryFrom) {
+      panX.value = withSpring(0, { damping: 15, stiffness: 150 }, () => {
+        isAnimating.value = false;
+      });
+      panY.value = withSpring(0, { damping: 15, stiffness: 150 });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Zoom
   const zoomScale = useSharedValue(1);
@@ -417,6 +430,7 @@ export default function SwipeScreen() {
   const [isLoadingInitial, setIsLoadingInitial] = useState(true);
   const [metadataAsset, setMetadataAsset] = useState<Asset | null>(null);
   const [metadataVisible, setMetadataVisible] = useState(false);
+  const [undoEntry, setUndoEntry] = useState<{ assetId: string; x: number; y: number } | null>(null);
 
   // ── Stable refs ──────────────────────────────────────────────────────────
   const sessionIdRef = useRef(sessionId);
@@ -633,11 +647,24 @@ export default function SwipeScreen() {
       useSessionStore.getState().sessions[sId]?.cursor ?? 0;
     useSessionStore.getState().setCursor(sId, Math.max(0, currentCursor - 1));
 
+    // Compute fly-back direction based on how the card was swiped out
+    const flyX = SCREEN_W * 1.6;
+    const flyY = SCREEN_H * 1.6;
+    let entryX = 0;
+    let entryY = 0;
+    switch (record.decision) {
+      case Decision.DELETE_STAGED: entryX = -flyX; break;
+      case Decision.KEEP:         entryX = flyX;  break;
+      case Decision.FAVORITE:     entryY = -flyY; break;
+      case Decision.SKIP_LATER:   entryY = flyY;  break;
+    }
+
     const cachedAsset = assetCacheRef.current[record.assetId];
     if (cachedAsset) {
+      setUndoEntry({ assetId: cachedAsset.id, x: entryX, y: entryY });
       setAssetBuffer((prev) => [cachedAsset, ...prev]);
     }
-  }, []);
+  }, [SCREEN_W, SCREEN_H]);
 
   // ── Long press → metadata modal ──────────────────────────────────────────
 
@@ -747,6 +774,10 @@ export default function SwipeScreen() {
           .reverse()
           .map((asset, reverseIdx) => {
             const stackIndex = visibleCards.length - 1 - reverseIdx;
+            const entry =
+              stackIndex === 0 && undoEntry?.assetId === asset.id
+                ? { x: undoEntry.x, y: undoEntry.y }
+                : undefined;
             return (
               <SwipeCard
                 key={asset.id}
@@ -756,6 +787,7 @@ export default function SwipeScreen() {
                 onLongPress={handleLongPress}
                 screenW={SCREEN_W}
                 screenH={SCREEN_H}
+                entryFrom={entry}
               />
             );
           })}
