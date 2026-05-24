@@ -46,3 +46,6 @@ app-example
 /.claude
 /.superpowers
 /docs
+/__tests__
+/.vscode
+/.github

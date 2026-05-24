@@ -29,8 +29,11 @@ export interface Asset {
   /** Unique identifier from expo-media-library (or a stable hash). */
   id: string;
 
-  /** Local file URI or remote URL (cloud-only assets may have a proxy URI). */
+  /** Local file URI. */
   uri: string;
+
+  /** Local file:// path when available (from getAssetInfoAsync). */
+  localUri?: string;
 
   /** Original filename as stored on disk, e.g. "IMG_4821.HEIC". */
   filename: string;
@@ -61,12 +64,6 @@ export interface Asset {
 
   /** Whether the asset is in the device's Hidden album. */
   hidden: boolean;
-
-  /**
-   * True when the asset exists only in iCloud / Google Photos and has not
-   * been downloaded to the device. Swiping on these requires a download step.
-   */
-  cloudOnly: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -211,8 +208,9 @@ export interface EventCluster {
   location?: GeoPoint;
 
   /**
-   * Content origin hint surfaced to the user.
-   * Examples: 'WhatsApp', 'Screenshots', 'Camera', 'Instagram'
+   * Resolved city/country name from offline reverse geocoding.
+   * Example: "Hamburg, DE"
+   * Undefined when no GPS data was available for this cluster.
    */
-  source?: string;
+  locationName?: string;
 }

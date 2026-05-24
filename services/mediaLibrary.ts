@@ -12,9 +12,6 @@
  *   RuntimeAsset / RuntimeAssetInfo rather than patching the library.
  * - isFavorite and isHidden are iOS-only. Optional chaining + nullish
  *   coalescing ensures safe defaults on Android.
- * - cloudOnly detection uses a URI heuristic: ph:// URIs are PhotoKit
- *   proxy URIs on iOS; a zero/absent fileSize confirms the asset has not
- *   been downloaded from iCloud.
  * - creationTime from expo-media-library v18 is normalised to Unix
  *   milliseconds on both iOS and Android.
  */
@@ -66,16 +63,6 @@ type RuntimeAssetInfo = MediaLibrary.AssetInfo & {
 // ---------------------------------------------------------------------------
 
 /**
- * Determine whether an asset exists only in the cloud and has no local copy.
- *
- * Heuristic: iOS cloud-only assets use the ph:// proxy URI scheme and have a
- * zero or absent fileSize when not downloaded from iCloud.
- */
-function isCloudOnly(uri: string, fileSize: number | undefined): boolean {
-  return uri.startsWith('ph://') && (fileSize === 0 || fileSize == null);
-}
-
-/**
  * Map expo-media-library's mediaType to our Asset.kind discriminator.
  * pairedVideo is an iOS Live Photo companion clip — treated as video.
  */
@@ -106,7 +93,6 @@ function mapPageAsset(raw: RuntimeAsset): Asset {
     albums: [],
     favorite: raw.isFavorite ?? false,
     hidden: raw.isHidden ?? false,
-    cloudOnly: isCloudOnly(raw.uri, raw.fileSize),
   };
 }
 
@@ -115,14 +101,20 @@ function mapPageAsset(raw: RuntimeAsset): Asset {
  * type, including GPS coordinates when the EXIF data contains them.
  */
 function mapAssetInfo(raw: RuntimeAssetInfo): Asset {
-  const location =
-    raw.location != null
-      ? { lat: raw.location.latitude, lng: raw.location.longitude }
-      : undefined;
+  let location: { lat: number; lng: number } | undefined;
+  if (raw.location != null) {
+    const loc = raw.location as any;
+    const lat = parseFloat(loc.latitude ?? loc.lat);
+    const lng = parseFloat(loc.longitude ?? loc.lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      location = { lat, lng };
+    }
+  }
 
   return {
     id: raw.id,
     uri: raw.uri,
+    localUri: raw.localUri ?? undefined,
     filename: raw.filename,
     kind: toKind(raw.mediaType),
     dimensions: { width: raw.width, height: raw.height },
@@ -132,7 +124,6 @@ function mapAssetInfo(raw: RuntimeAssetInfo): Asset {
     albums: [],
     favorite: raw.isFavorite ?? false,
     hidden: raw.isHidden ?? false,
-    cloudOnly: isCloudOnly(raw.uri, raw.fileSize),
   };
 }
 
@@ -229,13 +220,11 @@ export interface FetchPageResult {
  * @param options.after        endCursor returned by the previous fetchAssetsPage call
  * @param options.first        number of assets to fetch per page (default 50)
  * @param options.mediaType    filter by media type (default 'all' → photo + video)
- * @param options.skipCloudOnly  when true, cloud-only assets are removed from results
  */
 export async function fetchAssetsPage(options?: {
   after?: string;
   first?: number;
   mediaType?: 'photo' | 'video' | 'all';
-  skipCloudOnly?: boolean;
 }): Promise<FetchPageResult> {
   const first = options?.first ?? 50;
   const mediaType = resolveMediaType(options?.mediaType ?? 'all');
@@ -254,15 +243,73 @@ export async function fetchAssetsPage(options?: {
 
   let assets = result.assets.map((a) => mapPageAsset(a as RuntimeAsset));
 
-  if (options?.skipCloudOnly) {
-    assets = assets.filter((a) => !a.cloudOnly);
-  }
-
   return {
     assets,
     hasNextPage: result.hasNextPage,
     // expo-media-library returns '' when there are no more pages; normalise to undefined.
     endCursor: result.endCursor || undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Total media library storage estimate
+// ---------------------------------------------------------------------------
+
+export interface MediaStorageInfo {
+  photoCount: number;
+  videoCount: number;
+  photoBytes: number;
+  videoBytes: number;
+}
+
+/**
+ * Estimate the total storage occupied by photos and videos separately.
+ *
+ * Makes two queries (photo-only + video-only) so each media type gets its own
+ * sample average and extrapolation, producing a more accurate split than a
+ * single mixed query.
+ */
+export async function getMediaStorageInfo(): Promise<MediaStorageInfo> {
+  const sortBy: [MediaLibrary.SortByKey, boolean][] = [['creationTime', false]];
+
+  async function estimateForType(
+    mediaType: MediaLibrary.MediaTypeValue,
+  ): Promise<{ count: number; bytes: number }> {
+    try {
+      const result = await MediaLibrary.getAssetsAsync({
+        first: 200,
+        mediaType,
+        sortBy,
+      });
+
+      let sampleBytes = 0;
+      let sampleCount = 0;
+
+      for (const asset of result.assets) {
+        const raw = asset as RuntimeAsset;
+        if (raw.fileSize != null && raw.fileSize > 0) {
+          sampleBytes += raw.fileSize;
+          sampleCount++;
+        }
+      }
+
+      const avg = sampleCount > 0 ? sampleBytes / sampleCount : 0;
+      return { count: result.totalCount, bytes: Math.round(avg * result.totalCount) };
+    } catch {
+      return { count: 0, bytes: 0 };
+    }
+  }
+
+  const [photo, video] = await Promise.all([
+    estimateForType('photo'),
+    estimateForType('video'),
+  ]);
+
+  return {
+    photoCount: photo.count,
+    videoCount: video.count,
+    photoBytes: photo.bytes,
+    videoBytes: video.bytes,
   };
 }
 
@@ -295,9 +342,9 @@ export async function getScreenshotCount(): Promise<number> {
 
 /**
  * Fetch full metadata for a single asset, including GPS coordinates embedded
- * in EXIF and whether the asset is currently stored only on the network.
+ * in EXIF.
  *
- * shouldDownloadFromNetwork is set to false to avoid triggering an iCloud
+ * shouldDownloadFromNetwork is set to false to avoid triggering a network
  * download as a side-effect of reading metadata.
  *
  * Returns null if the asset does not exist or the OS call fails.
@@ -312,6 +359,17 @@ export async function getAssetInfo(assetId: string): Promise<Asset | null> {
     if (__DEV__) console.warn('[getAssetInfo]', err);
     return null;
   }
+}
+
+/**
+ * Fetch metadata for multiple assets by ID, in parallel.
+ *
+ * Returns assets in the same order as the input IDs. Assets that fail to
+ * load or don't exist are omitted from the result.
+ */
+export async function getAssetsByIds(assetIds: string[]): Promise<Asset[]> {
+  const results = await Promise.all(assetIds.map((id) => getAssetInfo(id)));
+  return results.filter((a): a is Asset => a !== null);
 }
 
 // ---------------------------------------------------------------------------
@@ -367,4 +425,70 @@ export async function deleteAssets(assetIds: string[]): Promise<DeletionResult> 
   }
 
   return { deleted, failed };
+}
+
+// ---------------------------------------------------------------------------
+// Batch GPS fetch
+// ---------------------------------------------------------------------------
+
+export async function batchFetchGPS(
+  assets: Asset[],
+  chunkSize = 50,
+): Promise<Asset[]> {
+  const t0 = Date.now();
+  let found = 0;
+  let errors = 0;
+  let locInspected = 0;
+
+  for (let i = 0; i < assets.length; i += chunkSize) {
+    const chunk = assets.slice(i, i + chunkSize);
+    const results = await Promise.all(
+      chunk.map(async (asset) => {
+        try {
+          const info = await MediaLibrary.getAssetInfoAsync(asset.id, {
+            shouldDownloadFromNetwork: false,
+          });
+          const raw = info as RuntimeAssetInfo;
+
+          if (raw.location != null) {
+            if (__DEV__ && locInspected < 5) {
+              locInspected++;
+              const loc = raw.location as any;
+              console.log(`[GPS-shape] ${asset.filename}: keys=${JSON.stringify(Object.keys(loc))}, value=${JSON.stringify(loc)}`);
+            }
+
+            const loc = raw.location as any;
+            const lat = parseFloat(loc.latitude ?? loc.lat);
+            const lng = parseFloat(loc.longitude ?? loc.lng ?? loc.lon);
+            if (Number.isFinite(lat) && Number.isFinite(lng)) {
+              return { id: asset.id, location: { lat, lng } };
+            }
+          }
+        } catch {
+          errors++;
+        }
+        return null;
+      }),
+    );
+
+    for (const result of results) {
+      if (result) {
+        found++;
+        const target = assets.find((a) => a.id === result.id);
+        if (target) {
+          (target as { location?: Asset['location'] }).location = result.location;
+        }
+      }
+    }
+
+    if (__DEV__ && (i + chunkSize) % 500 === 0) {
+      console.log(`[GPS] progress: ${Math.min(i + chunkSize, assets.length)}/${assets.length} checked, ${found} with GPS`);
+    }
+  }
+
+  if (__DEV__) {
+    console.log(`[GPS] done in ${((Date.now() - t0) / 1000).toFixed(1)}s — ${found}/${assets.length} have GPS (${errors} errors)`);
+  }
+
+  return assets;
 }
