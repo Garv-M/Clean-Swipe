@@ -21,7 +21,7 @@ import { Decision } from '@/types';
 import { formatBytes } from '@/utils/format';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -30,7 +30,6 @@ import {
   TouchableOpacity,
   useWindowDimensions,
   View,
-  type ViewStyle,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -55,12 +54,10 @@ const SUSPICIOUS_VELOCITY = 2000;
 const SUSPICIOUS_TIME_MS = 500;
 const CARD_FLY_DURATION = 280;
 
-// Card stack visual offsets (bottom → top order for rendering)
-const CARD_STACK = [
-  { scale: 0.9, translateY: 20 },  // third (bottom)
-  { scale: 0.95, translateY: 10 }, // second (middle)
-  { scale: 1.0, translateY: 0 },   // top (interactive)
-] as const;
+const STACK_SCALES = [1.0, 0.95, 0.9] as const;
+const STACK_OFFSETS = [0, 10, 20] as const;
+
+const SPRING_CONFIG = { damping: 18, stiffness: 180 };
 
 // ---------------------------------------------------------------------------
 // MetadataModal
@@ -93,9 +90,7 @@ function MetadataModal({ asset, visible, onClose }: MetadataModalProps) {
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      {/* Tap outside to dismiss */}
       <Pressable style={styles.modalBackdrop} onPress={onClose}>
-        {/* Stop propagation so tapping inside the card doesn't close */}
         <Pressable style={styles.modalCard} onPress={() => { /* noop */ }}>
           <Text variant="heading" style={styles.modalTitle}>
             {asset.filename}
@@ -140,6 +135,265 @@ function MetaRow({ label, value }: { label: string; value: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// SwipeCard — per-card component with its own Reanimated shared values
+// ---------------------------------------------------------------------------
+
+interface SwipeCardProps {
+  asset: Asset;
+  stackIndex: number; // 0 = top, 1 = middle, 2 = bottom
+  onSwipe: (decision: Decision, velocity: number) => void;
+  onLongPress: () => void;
+  screenW: number;
+  screenH: number;
+}
+
+function SwipeCard({
+  asset,
+  stackIndex,
+  onSwipe,
+  onLongPress,
+  screenW,
+  screenH,
+}: SwipeCardProps) {
+  const SWIPE_X_THRESHOLD = screenW * 0.3;
+  const SWIPE_Y_THRESHOLD = screenH * 0.3;
+  const FLY_X = screenW * 1.6;
+  const FLY_Y = screenH * 1.6;
+
+  // Stack position animation (smooth transition when card moves up in stack)
+  const cardScale = useSharedValue(STACK_SCALES[stackIndex] ?? 0.9);
+  const cardOffsetY = useSharedValue(STACK_OFFSETS[stackIndex] ?? 20);
+
+  useEffect(() => {
+    const targetScale = STACK_SCALES[stackIndex] ?? 0.9;
+    const targetOffset = STACK_OFFSETS[stackIndex] ?? 20;
+    cardScale.value = withSpring(targetScale, SPRING_CONFIG);
+    cardOffsetY.value = withSpring(targetOffset, SPRING_CONFIG);
+  }, [stackIndex, cardScale, cardOffsetY]);
+
+  // Pan gesture values (only meaningful for top card, always 0 for others)
+  const panX = useSharedValue(0);
+  const panY = useSharedValue(0);
+  const isAnimating = useSharedValue(false);
+
+  // Zoom
+  const zoomScale = useSharedValue(1);
+  const isZoomed = useSharedValue(false);
+
+  // Gestures — use isAnimating as the guard on the UI thread;
+  // non-top cards never get gesture events because GestureDetector
+  // is only active on the topmost card in the stack (highest z-order).
+  const panGesture = Gesture.Pan()
+    .onUpdate((e) => {
+      if (isAnimating.value) return;
+      panX.value = e.translationX;
+      panY.value = e.translationY;
+    })
+    .onEnd((e) => {
+      if (isAnimating.value) return;
+
+      const { translationX, translationY, velocityX, velocityY } = e;
+      const maxV = Math.max(Math.abs(velocityX), Math.abs(velocityY));
+
+      let decision: Decision | null = null;
+      let targetX = 0;
+      let targetY = 0;
+
+      if (velocityX < -VELOCITY_THRESHOLD) {
+        decision = Decision.DELETE_STAGED;
+        targetX = -FLY_X;
+      } else if (velocityX > VELOCITY_THRESHOLD) {
+        decision = Decision.KEEP;
+        targetX = FLY_X;
+      } else if (velocityY < -VELOCITY_THRESHOLD) {
+        decision = Decision.FAVORITE;
+        targetY = -FLY_Y;
+      } else if (velocityY > VELOCITY_THRESHOLD) {
+        decision = Decision.SKIP_LATER;
+        targetY = FLY_Y;
+      } else if (translationX < -SWIPE_X_THRESHOLD) {
+        decision = Decision.DELETE_STAGED;
+        targetX = -FLY_X;
+      } else if (translationX > SWIPE_X_THRESHOLD) {
+        decision = Decision.KEEP;
+        targetX = FLY_X;
+      } else if (translationY < -SWIPE_Y_THRESHOLD) {
+        decision = Decision.FAVORITE;
+        targetY = -FLY_Y;
+      } else if (translationY > SWIPE_Y_THRESHOLD) {
+        decision = Decision.SKIP_LATER;
+        targetY = FLY_Y;
+      }
+
+      if (decision !== null) {
+        isAnimating.value = true;
+        const captured = decision;
+
+        if (targetX !== 0) {
+          panX.value = withTiming(
+            targetX,
+            { duration: CARD_FLY_DURATION },
+            (finished) => {
+              if (finished) {
+                runOnJS(onSwipe)(captured, maxV);
+              }
+            },
+          );
+          panY.value = withTiming(translationY * 0.4, {
+            duration: CARD_FLY_DURATION,
+          });
+        } else {
+          panY.value = withTiming(
+            targetY,
+            { duration: CARD_FLY_DURATION },
+            (finished) => {
+              if (finished) {
+                runOnJS(onSwipe)(captured, maxV);
+              }
+            },
+          );
+          panX.value = withTiming(translationX * 0.4, {
+            duration: CARD_FLY_DURATION,
+          });
+        }
+      } else {
+        panX.value = withSpring(0, { damping: 20, stiffness: 200 });
+        panY.value = withSpring(0, { damping: 20, stiffness: 200 });
+      }
+    });
+
+  const doubleTapGesture = Gesture.Tap()
+    .numberOfTaps(2)
+    .onEnd(() => {
+      isZoomed.value = !isZoomed.value;
+      zoomScale.value = withTiming(isZoomed.value ? 2 : 1, { duration: 250 });
+    });
+
+  const longPressGesture = Gesture.LongPress()
+    .minDuration(600)
+    .onStart(() => {
+      runOnJS(onLongPress)();
+    });
+
+  const composedGesture = Gesture.Exclusive(
+    doubleTapGesture,
+    longPressGesture,
+    panGesture,
+  );
+
+  // Animated style — no branching on shared values.
+  // panX/panY/zoomScale are always 0/0/1 for non-top cards (never modified),
+  // so the math produces the correct result uniformly.
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: panX.value },
+      { translateY: panY.value + cardOffsetY.value },
+      { scale: cardScale.value * zoomScale.value },
+    ],
+  }));
+
+  // Overlays — panX/panY are 0 for non-top cards so opacity stays 0 naturally
+  const leftOverlayStyle = useAnimatedStyle(() => {
+    const domX = Math.abs(panX.value) >= Math.abs(panY.value);
+    const opacity =
+      domX && panX.value < 0
+        ? interpolate(panX.value, [-SWIPE_X_THRESHOLD, 0], [1, 0], Extrapolation.CLAMP)
+        : 0;
+    return { opacity };
+  });
+
+  const rightOverlayStyle = useAnimatedStyle(() => {
+    const domX = Math.abs(panX.value) >= Math.abs(panY.value);
+    const opacity =
+      domX && panX.value > 0
+        ? interpolate(panX.value, [0, SWIPE_X_THRESHOLD], [0, 1], Extrapolation.CLAMP)
+        : 0;
+    return { opacity };
+  });
+
+  const upOverlayStyle = useAnimatedStyle(() => {
+    const domY = Math.abs(panY.value) > Math.abs(panX.value);
+    const opacity =
+      domY && panY.value < 0
+        ? interpolate(panY.value, [-SWIPE_Y_THRESHOLD, 0], [1, 0], Extrapolation.CLAMP)
+        : 0;
+    return { opacity };
+  });
+
+  const downOverlayStyle = useAnimatedStyle(() => {
+    const domY = Math.abs(panY.value) > Math.abs(panX.value);
+    const opacity =
+      domY && panY.value > 0
+        ? interpolate(panY.value, [0, SWIPE_Y_THRESHOLD], [0, 1], Extrapolation.CLAMP)
+        : 0;
+    return { opacity };
+  });
+
+  return (
+    <GestureDetector gesture={composedGesture}>
+      <Animated.View style={[styles.card, animatedStyle]}>
+        <Image
+          source={asset.localUri ?? asset.uri}
+          style={styles.cardImage}
+          contentFit="contain"
+        />
+
+        {asset.kind === 'video' && <VideoBadge />}
+
+        {/* Directional overlays (only visible on top card during drag) */}
+        <Animated.View
+          style={[styles.overlay, styles.overlayLeft, leftOverlayStyle]}
+          pointerEvents="none"
+        >
+          <Text variant="heading" style={[styles.overlayLabel, { color: Colors.destructive }]}>
+            DELETE
+          </Text>
+        </Animated.View>
+
+        <Animated.View
+          style={[styles.overlay, styles.overlayRight, rightOverlayStyle]}
+          pointerEvents="none"
+        >
+          <Text variant="heading" style={[styles.overlayLabel, { color: Colors.success }]}>
+            KEEP
+          </Text>
+        </Animated.View>
+
+        <Animated.View
+          style={[styles.overlay, styles.overlayTop, upOverlayStyle]}
+          pointerEvents="none"
+        >
+          <Text variant="heading" style={[styles.overlayLabel, { color: Colors.info }]}>
+            FAV
+          </Text>
+        </Animated.View>
+
+        <Animated.View
+          style={[styles.overlay, styles.overlayBottom, downOverlayStyle]}
+          pointerEvents="none"
+        >
+          <Text variant="heading" style={[styles.overlayLabel, { color: 'rgba(156,163,175,1)' }]}>
+            SKIP
+          </Text>
+        </Animated.View>
+      </Animated.View>
+    </GestureDetector>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// VideoBadge
+// ---------------------------------------------------------------------------
+
+function VideoBadge() {
+  return (
+    <View style={styles.videoBadge}>
+      <Text variant="label" style={styles.videoBadgeText}>▶</Text>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // SwipeScreen
 // ---------------------------------------------------------------------------
 
@@ -148,12 +402,7 @@ export default function SwipeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  // ── Screen dimensions (dynamic — handles orientation/multi-window) ────────
   const { width: SCREEN_W, height: SCREEN_H } = useWindowDimensions();
-  const SWIPE_X_THRESHOLD = SCREEN_W * 0.3;
-  const SWIPE_Y_THRESHOLD = SCREEN_H * 0.3;
-  const FLY_X = SCREEN_W * 1.6;
-  const FLY_Y = SCREEN_H * 1.6;
 
   // ── Store selectors ──────────────────────────────────────────────────────
   const session = useSessionStore((s) =>
@@ -169,7 +418,7 @@ export default function SwipeScreen() {
   const [metadataAsset, setMetadataAsset] = useState<Asset | null>(null);
   const [metadataVisible, setMetadataVisible] = useState(false);
 
-  // ── Stable refs (readable in runOnJS closures without stale-closure risk) ─
+  // ── Stable refs ──────────────────────────────────────────────────────────
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
 
@@ -182,24 +431,11 @@ export default function SwipeScreen() {
   const isFetchingRef = useRef(isFetching);
   isFetchingRef.current = isFetching;
 
-  /** Index into queueIds — tracks how far we've loaded from the session queue. */
   const queueOffsetRef = useRef(0);
-
-  /** Cache of every asset ever loaded — used to restore cards after undo. */
   const assetCacheRef = useRef<Record<string, Asset>>({});
-
   const lastSwipeTimeRef = useRef(0);
   const hasMarkedStartedRef = useRef(false);
-  /** Guards against handleComplete firing more than once. */
   const hasCompletedRef = useRef(false);
-
-  // ── Reanimated shared values ─────────────────────────────────────────────
-  const translateX = useSharedValue(0);
-  const translateY = useSharedValue(0);
-  const isAnimating = useSharedValue(false);
-  const zoomScale = useSharedValue(1);
-  const isZoomed = useSharedValue(false);
-  const cardOpacity = useSharedValue(1);
 
   // ── Progress ─────────────────────────────────────────────────────────────
   const cursor = session?.cursor ?? 0;
@@ -211,35 +447,15 @@ export default function SwipeScreen() {
     return () => setSwipeSessionActive(false);
   }, [setSwipeSessionActive]);
 
-  // ── Populate asset cache whenever buffer changes ──────────────────────────
+  // ── Populate asset cache ─────────────────────────────────────────────────
   useEffect(() => {
     for (const asset of assetBuffer) {
       assetCacheRef.current[asset.id] = asset;
     }
   }, [assetBuffer]);
 
-  // Reset shared values after React has swapped the top card out of the tree.
-  const prevTopIdRef = useRef(assetBuffer[0]?.id);
-  useEffect(() => {
-    const topId = assetBuffer[0]?.id;
-    if (topId !== prevTopIdRef.current) {
-      prevTopIdRef.current = topId;
-      translateX.value = 0;
-      translateY.value = 0;
-      zoomScale.value = 1;
-      isZoomed.value = false;
-      isAnimating.value = false;
-      cardOpacity.value = 1;
-    }
-  }, [assetBuffer, translateX, translateY, zoomScale, isZoomed, isAnimating, cardOpacity]);
-
   // ── Media-library fetch ───────────────────────────────────────────────────
 
-  /**
-   * Fetch the next batch of assets from the session's queueIds.
-   * Filters out already-decided assets.
-   * Stable — reads live state via refs and store.getState().
-   */
   const loadNextPage = useCallback(async () => {
     if (isFetchingRef.current || !hasNextPageRef.current) return;
     isFetchingRef.current = true;
@@ -299,7 +515,7 @@ export default function SwipeScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Prefetch: keep buffer well-stocked
+  // Prefetch
   useEffect(() => {
     if (assetBuffer.length < PREFETCH_THRESHOLD && hasNextPage && !isFetching) {
       loadNextPage();
@@ -318,9 +534,6 @@ export default function SwipeScreen() {
     router.push(`/swipe/${sId}/summary` as any);
   }, [router]);
 
-  // Auto-complete: fires when buffer runs dry and the media library is exhausted.
-  // Covers the edge case where all remaining ML assets were already decided,
-  // so no further swipes occur to trigger the in-decision completion check.
   useEffect(() => {
     if (
       !isLoadingInitial &&
@@ -333,7 +546,7 @@ export default function SwipeScreen() {
     }
   }, [isLoadingInitial, assetBuffer.length, hasNextPage, isFetching, cursor, handleComplete]);
 
-  // ── Decision handler (stable — called via runOnJS from gesture worklet) ───
+  // ── Decision handler ─────────────────────────────────────────────────────
 
   const handleDecision = useCallback(
     (decision: Decision, velocity: number) => {
@@ -344,7 +557,6 @@ export default function SwipeScreen() {
       const currentAsset = buffer[0];
       if (!currentAsset) return;
 
-      // Stamp session start on very first swipe
       if (!hasMarkedStartedRef.current) {
         useSessionStore.getState().markSessionStarted(sId);
         hasMarkedStartedRef.current = true;
@@ -385,7 +597,8 @@ export default function SwipeScreen() {
         (useSessionStore.getState().sessions[sId]?.cursor ?? 0) + 1;
       useSessionStore.getState().setCursor(sId, newCursor);
 
-      // Advance buffer — useEffect resets shared values after React removes the old card
+      // Remove top card — the next card's SwipeCard instance persists and
+      // springs smoothly to the top position via its stackIndex change.
       setAssetBuffer((prev) => prev.slice(1));
 
       // Check completion
@@ -422,203 +635,13 @@ export default function SwipeScreen() {
 
   // ── Long press → metadata modal ──────────────────────────────────────────
 
-  const handleLongPressJS = useCallback(() => {
+  const handleLongPress = useCallback(() => {
     const current = assetBufferRef.current[0];
     if (current) {
       setMetadataAsset(current);
       setMetadataVisible(true);
     }
   }, []);
-
-  // ── Gestures ──────────────────────────────────────────────────────────────
-
-  const panGesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .onUpdate((e) => {
-          if (isAnimating.value) return;
-          translateX.value = e.translationX;
-          translateY.value = e.translationY;
-        })
-        .onEnd((e) => {
-          if (isAnimating.value) return;
-
-          const { translationX, translationY, velocityX, velocityY } = e;
-          const maxV = Math.max(Math.abs(velocityX), Math.abs(velocityY));
-
-          let decision: Decision | null = null;
-          let targetX = 0;
-          let targetY = 0;
-
-          // Velocity checks have priority over displacement checks
-          if (velocityX < -VELOCITY_THRESHOLD) {
-            decision = Decision.DELETE_STAGED;
-            targetX = -FLY_X;
-          } else if (velocityX > VELOCITY_THRESHOLD) {
-            decision = Decision.KEEP;
-            targetX = FLY_X;
-          } else if (velocityY < -VELOCITY_THRESHOLD) {
-            decision = Decision.FAVORITE;
-            targetY = -FLY_Y;
-          } else if (velocityY > VELOCITY_THRESHOLD) {
-            decision = Decision.SKIP_LATER;
-            targetY = FLY_Y;
-          } else if (translationX < -SWIPE_X_THRESHOLD) {
-            decision = Decision.DELETE_STAGED;
-            targetX = -FLY_X;
-          } else if (translationX > SWIPE_X_THRESHOLD) {
-            decision = Decision.KEEP;
-            targetX = FLY_X;
-          } else if (translationY < -SWIPE_Y_THRESHOLD) {
-            decision = Decision.FAVORITE;
-            targetY = -FLY_Y;
-          } else if (translationY > SWIPE_Y_THRESHOLD) {
-            decision = Decision.SKIP_LATER;
-            targetY = FLY_Y;
-          }
-
-          if (decision !== null) {
-            isAnimating.value = true;
-            const captured = decision;
-
-            if (targetX !== 0) {
-              // Horizontal fly-off; let Y drift slightly in the drag direction
-              translateX.value = withTiming(
-                targetX,
-                { duration: CARD_FLY_DURATION },
-                (finished) => {
-                  isAnimating.value = false;
-                  if (finished) {
-                    cardOpacity.value = 0;
-                    runOnJS(handleDecision)(captured, maxV);
-                  }
-                },
-              );
-              translateY.value = withTiming(translationY * 0.4, {
-                duration: CARD_FLY_DURATION,
-              });
-            } else {
-              // Vertical fly-off; let X drift slightly
-              translateY.value = withTiming(
-                targetY,
-                { duration: CARD_FLY_DURATION },
-                (finished) => {
-                  isAnimating.value = false;
-                  if (finished) {
-                    cardOpacity.value = 0;
-                    runOnJS(handleDecision)(captured, maxV);
-                  }
-                },
-              );
-              translateX.value = withTiming(translationX * 0.4, {
-                duration: CARD_FLY_DURATION,
-              });
-            }
-          } else {
-            // Spring back to center
-            translateX.value = withSpring(0, { damping: 20, stiffness: 200 });
-            translateY.value = withSpring(0, { damping: 20, stiffness: 200 });
-          }
-        }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [handleDecision, SWIPE_X_THRESHOLD, SWIPE_Y_THRESHOLD, FLY_X, FLY_Y],
-  );
-
-  const doubleTapGesture = useMemo(
-    () =>
-      Gesture.Tap()
-        .numberOfTaps(2)
-        .onEnd(() => {
-          isZoomed.value = !isZoomed.value;
-          zoomScale.value = withTiming(isZoomed.value ? 2 : 1, { duration: 250 });
-        }),
-    [isZoomed, zoomScale],
-  );
-
-  const longPressGesture = useMemo(
-    () =>
-      Gesture.LongPress()
-        .minDuration(600)
-        .onStart(() => {
-          runOnJS(handleLongPressJS)();
-        }),
-    [handleLongPressJS],
-  );
-
-  // Exclusive: first gesture to activate wins.
-  // Double-tap wins over long-press over pan (natural priority — no conflicts).
-  const composedGesture = useMemo(
-    () => Gesture.Exclusive(doubleTapGesture, longPressGesture, panGesture),
-    [doubleTapGesture, longPressGesture, panGesture],
-  );
-
-  // ── Animated styles ───────────────────────────────────────────────────────
-
-  const topCardStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: translateX.value },
-      { translateY: translateY.value },
-      { scale: zoomScale.value },
-    ],
-    opacity: cardOpacity.value,
-  }));
-
-  // Overlays — proportional to drag, only the dominant axis is shown.
-  const leftOverlayStyle = useAnimatedStyle(() => {
-    const domX = Math.abs(translateX.value) >= Math.abs(translateY.value);
-    const opacity =
-      domX && translateX.value < 0
-        ? interpolate(
-            translateX.value,
-            [-SWIPE_X_THRESHOLD, 0],
-            [1, 0],
-            Extrapolation.CLAMP,
-          )
-        : 0;
-    return { opacity };
-  });
-
-  const rightOverlayStyle = useAnimatedStyle(() => {
-    const domX = Math.abs(translateX.value) >= Math.abs(translateY.value);
-    const opacity =
-      domX && translateX.value > 0
-        ? interpolate(
-            translateX.value,
-            [0, SWIPE_X_THRESHOLD],
-            [0, 1],
-            Extrapolation.CLAMP,
-          )
-        : 0;
-    return { opacity };
-  });
-
-  const upOverlayStyle = useAnimatedStyle(() => {
-    const domY = Math.abs(translateY.value) > Math.abs(translateX.value);
-    const opacity =
-      domY && translateY.value < 0
-        ? interpolate(
-            translateY.value,
-            [-SWIPE_Y_THRESHOLD, 0],
-            [1, 0],
-            Extrapolation.CLAMP,
-          )
-        : 0;
-    return { opacity };
-  });
-
-  const downOverlayStyle = useAnimatedStyle(() => {
-    const domY = Math.abs(translateY.value) > Math.abs(translateX.value);
-    const opacity =
-      domY && translateY.value > 0
-        ? interpolate(
-            translateY.value,
-            [0, SWIPE_Y_THRESHOLD],
-            [0, 1],
-            Extrapolation.CLAMP,
-          )
-        : 0;
-    return { opacity };
-  });
 
   // ── Render helpers ────────────────────────────────────────────────────────
 
@@ -676,9 +699,8 @@ export default function SwipeScreen() {
     );
   }
 
-  const currentAsset = assetBuffer[0];
-  const nextAsset = assetBuffer[1] ?? null;
-  const thirdAsset = assetBuffer[2] ?? null;
+  // Show up to 3 cards, rendered bottom-to-top (last element = highest z-index)
+  const visibleCards = assetBuffer.slice(0, 3);
 
   // ── Main render ───────────────────────────────────────────────────────────
 
@@ -691,7 +713,6 @@ export default function SwipeScreen() {
     >
       {/* ── Top bar ── */}
       <View style={styles.topBar}>
-        {/* Progress indicator */}
         <View style={styles.progressGroup}>
           <Text variant="label" style={styles.progressText}>
             {cursor} / {total > 0 ? total : '—'}
@@ -701,7 +722,6 @@ export default function SwipeScreen() {
           </View>
         </View>
 
-        {/* Undo button */}
         <TouchableOpacity
           onPress={handleUndo}
           disabled={undoDisabled}
@@ -716,81 +736,23 @@ export default function SwipeScreen() {
 
       {/* ── Card stack ── */}
       <View style={styles.cardStack}>
-        {/* Third card (visually behind) */}
-        {thirdAsset && (
-          <StaticCard
-            asset={thirdAsset}
-            style={{
-              transform: [
-                { scale: CARD_STACK[0].scale },
-                { translateY: CARD_STACK[0].translateY },
-              ],
-            }}
-          />
-        )}
-
-        {/* Second card */}
-        {nextAsset && (
-          <StaticCard
-            asset={nextAsset}
-            style={{
-              transform: [
-                { scale: CARD_STACK[1].scale },
-                { translateY: CARD_STACK[1].translateY },
-              ],
-            }}
-          />
-        )}
-
-        {/* Top card — interactive */}
-        <GestureDetector gesture={composedGesture}>
-          <Animated.View style={[styles.card, topCardStyle]}>
-            <Image
-              source={currentAsset.localUri ?? currentAsset.uri}
-              style={styles.cardImage}
-              contentFit="contain"
-            />
-
-            {currentAsset.kind === 'video' && <VideoBadge />}
-
-            {/* Directional overlays */}
-            <Animated.View
-              style={[styles.overlay, styles.overlayLeft, leftOverlayStyle]}
-              pointerEvents="none"
-            >
-              <Text variant="heading" style={[styles.overlayLabel, { color: Colors.destructive }]}>
-                DELETE
-              </Text>
-            </Animated.View>
-
-            <Animated.View
-              style={[styles.overlay, styles.overlayRight, rightOverlayStyle]}
-              pointerEvents="none"
-            >
-              <Text variant="heading" style={[styles.overlayLabel, { color: Colors.success }]}>
-                KEEP
-              </Text>
-            </Animated.View>
-
-            <Animated.View
-              style={[styles.overlay, styles.overlayTop, upOverlayStyle]}
-              pointerEvents="none"
-            >
-              <Text variant="heading" style={[styles.overlayLabel, { color: Colors.info }]}>
-                FAV
-              </Text>
-            </Animated.View>
-
-            <Animated.View
-              style={[styles.overlay, styles.overlayBottom, downOverlayStyle]}
-              pointerEvents="none"
-            >
-              <Text variant="heading" style={[styles.overlayLabel, { color: 'rgba(156,163,175,1)' }]}>
-                SKIP
-              </Text>
-            </Animated.View>
-          </Animated.View>
-        </GestureDetector>
+        {visibleCards
+          .slice()
+          .reverse()
+          .map((asset, reverseIdx) => {
+            const stackIndex = visibleCards.length - 1 - reverseIdx;
+            return (
+              <SwipeCard
+                key={asset.id}
+                asset={asset}
+                stackIndex={stackIndex}
+                onSwipe={handleDecision}
+                onLongPress={handleLongPress}
+                screenW={SCREEN_W}
+                screenH={SCREEN_H}
+              />
+            );
+          })}
       </View>
 
       {/* ── Bottom bar ── */}
@@ -808,31 +770,6 @@ export default function SwipeScreen() {
         visible={metadataVisible}
         onClose={() => setMetadataVisible(false)}
       />
-    </View>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// StaticCard — non-interactive background card
-// ---------------------------------------------------------------------------
-
-function StaticCard({ asset, style }: { asset: Asset; style?: ViewStyle }) {
-  return (
-    <View style={[styles.card, style]}>
-      <Image source={asset.localUri ?? asset.uri} style={styles.cardImage} contentFit="cover" />
-      {asset.kind === 'video' && <VideoBadge />}
-    </View>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// VideoBadge — play icon overlay for video assets
-// ---------------------------------------------------------------------------
-
-function VideoBadge() {
-  return (
-    <View style={styles.videoBadge}>
-      <Text variant="label" style={styles.videoBadgeText}>▶</Text>
     </View>
   );
 }
@@ -906,7 +843,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     overflow: 'hidden',
     backgroundColor: '#000000',
-    // Elevation / shadow
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
