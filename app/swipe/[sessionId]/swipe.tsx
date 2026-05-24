@@ -534,6 +534,12 @@ export default function SwipeScreen() {
     router.push(`/swipe/${sId}/summary` as any);
   }, [router]);
 
+  const handleEndEarly = useCallback(() => {
+    const sId = sessionIdRef.current;
+    if (!sId) return;
+    router.push(`/swipe/${sId}/summary` as any);
+  }, [router]);
+
   useEffect(() => {
     if (
       !isLoadingInitial &&
@@ -760,7 +766,7 @@ export default function SwipeScreen() {
         <Button
           variant="ghost"
           label="End Session Early"
-          onPress={handleComplete}
+          onPress={handleEndEarly}
         />
       </View>
 
