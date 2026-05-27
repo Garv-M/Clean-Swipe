@@ -52,9 +52,9 @@ interface StatsState {
   recordSessionCompleted(): void;
 
   /**
-   * If `lastResetDate` differs from today (i.e. the calendar day has changed),
-   * zero out `todayReviewed` and update `lastResetDate`. Call this at app
-   * launch and when the app returns to the foreground.
+   * If `lastResetDate` differs from today, zero out `todayReviewed` and
+   * `todayFreedBytes`, then update `lastResetDate`. Call at app launch and
+   * whenever the app returns to the foreground.
    */
   resetTodayIfNeeded(): void;
 }
@@ -81,6 +81,7 @@ export const useStatsStore = create<StatsState>()(
         set((state) => ({
           totalFreedBytes: state.totalFreedBytes + bytes,
           todayFreedBytes: (state.lastResetDate === today ? state.todayFreedBytes : 0) + bytes,
+          todayReviewed: state.lastResetDate === today ? state.todayReviewed : 0,
           lastResetDate: today,
           monthlyFreedBytes: {
             ...state.monthlyFreedBytes,
@@ -94,6 +95,7 @@ export const useStatsStore = create<StatsState>()(
         set((state) => ({
           photosReviewed: state.photosReviewed + count,
           todayReviewed: (state.lastResetDate === today ? state.todayReviewed : 0) + count,
+          todayFreedBytes: state.lastResetDate === today ? state.todayFreedBytes : 0,
           lastResetDate: today,
         }));
       },
