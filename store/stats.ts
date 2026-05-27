@@ -36,6 +36,9 @@ interface StatsState {
   /** Assets reviewed on the current calendar day (resets at midnight). */
   todayReviewed: number;
 
+  /** Storage freed on the current calendar day in bytes (resets at midnight). */
+  todayFreedBytes: number;
+
   /** The 'YYYY-MM-DD' date when `todayReviewed` was last zeroed out. */
   lastResetDate: string;
 
@@ -69,12 +72,16 @@ export const useStatsStore = create<StatsState>()(
       sessionsCompleted: 0,
       monthlyFreedBytes: {},
       todayReviewed: 0,
+      todayFreedBytes: 0,
       lastResetDate: todayDateString(),
 
       recordFreed(bytes) {
         const month = currentMonthKey();
+        const today = todayDateString();
         set((state) => ({
           totalFreedBytes: state.totalFreedBytes + bytes,
+          todayFreedBytes: (state.lastResetDate === today ? state.todayFreedBytes : 0) + bytes,
+          lastResetDate: today,
           monthlyFreedBytes: {
             ...state.monthlyFreedBytes,
             [month]: (state.monthlyFreedBytes[month] ?? 0) + bytes,
@@ -102,7 +109,7 @@ export const useStatsStore = create<StatsState>()(
       resetTodayIfNeeded() {
         const today = todayDateString();
         if (get().lastResetDate !== today) {
-          set({ todayReviewed: 0, lastResetDate: today });
+          set({ todayReviewed: 0, todayFreedBytes: 0, lastResetDate: today });
         }
       },
     }),
