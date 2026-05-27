@@ -27,7 +27,7 @@ import { useStatsStore } from '@/store/stats';
 import type { EventCluster } from '@/types';
 import { formatBytes } from '@/utils/format';
 import { Redirect, useRouter } from 'expo-router';
-import React, { useCallback, useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import {
   Alert,
   ScrollView,
@@ -37,6 +37,9 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+const PRIMARY_BORDER = 'rgba(249,115,22,0.35)' as const;
+const BELL_HIT_SLOP = { top: 10, bottom: 10, left: 10, right: 10 } as const;
 
 // ---------------------------------------------------------------------------
 // HomeScreen
@@ -74,6 +77,11 @@ export default function HomeScreen() {
     (clusterId: string) =>
       Object.values(sessions).find((s) => s.clusterId === clusterId) ?? null,
     [sessions],
+  );
+
+  const contentStyle = useMemo(
+    () => [styles.content, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 32 }],
+    [insets.top, insets.bottom],
   );
 
   // ── Handlers ─────────────────────────────────────────────────────────────
@@ -129,10 +137,7 @@ export default function HomeScreen() {
   return (
     <ScrollView
       style={styles.scroll}
-      contentContainerStyle={[
-        styles.content,
-        { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 32 },
-      ]}
+      contentContainerStyle={contentStyle}
       showsVerticalScrollIndicator={false}
     >
       {/* ── Header row ── */}
@@ -144,7 +149,7 @@ export default function HomeScreen() {
         </View>
         {/* Right side: bell + avatar */}
         <View style={styles.headerRight}>
-          <TouchableOpacity hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} activeOpacity={0.7}>
+          <TouchableOpacity hitSlop={BELL_HIT_SLOP} activeOpacity={0.7}>
             <IconSymbol name="bell" size={24} color={Colors.textSecondary} />
           </TouchableOpacity>
           <View style={styles.avatar}>
@@ -191,7 +196,7 @@ export default function HomeScreen() {
         </Card>
 
         {/* Today — orange */}
-        <Card style={[styles.statCard, { borderColor: 'rgba(249,115,22,0.35)' }]}>
+        <Card style={[styles.statCard, { borderColor: PRIMARY_BORDER }]}>
           <RNText style={[styles.statNumber, { color: Colors.primary }]}>{todayReviewed}</RNText>
           <Text variant="caption" style={styles.statLabel}>
             {'\n'}Today
@@ -352,7 +357,7 @@ const styles = StyleSheet.create({
   avatarText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#fff',
+    color: Colors.textPrimary,
   },
 
   // ── Hero card ──────────────────────────────────────────────────────────────
@@ -371,7 +376,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderWidth: 1,
-    borderColor: 'rgba(249,115,22,0.35)',
+    borderColor: PRIMARY_BORDER,
   },
   todayBadgeText: {
     fontSize: 12,
