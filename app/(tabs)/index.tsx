@@ -32,6 +32,7 @@ import {
   Alert,
   ScrollView,
   StyleSheet,
+  Text as RNText,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -49,6 +50,7 @@ export default function HomeScreen() {
   const onboarded = useSettingsStore((s) => s.onboarded);
 
   const totalFreedBytes = useStatsStore((s) => s.totalFreedBytes);
+  const todayFreedBytes = useStatsStore((s) => s.todayFreedBytes);
   const photosReviewed = useStatsStore((s) => s.photosReviewed);
   const sessionsCompleted = useStatsStore((s) => s.sessionsCompleted);
   const todayReviewed = useStatsStore((s) => s.todayReviewed);
@@ -135,18 +137,32 @@ export default function HomeScreen() {
     >
       {/* ── Header row ── */}
       <View style={styles.headerRow}>
-        <Text variant="title">Clean Swipe</Text>
-        <TouchableOpacity
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          activeOpacity={0.7}
-        >
-          <IconSymbol name="bell" size={24} color={Colors.textSecondary} />
-        </TouchableOpacity>
+        {/* Two-tone logo */}
+        <View style={styles.logoRow}>
+          <RNText style={styles.logoClean}>Clean</RNText>
+          <RNText style={styles.logoSwipe}> Swipe</RNText>
+        </View>
+        {/* Right side: bell + avatar */}
+        <View style={styles.headerRight}>
+          <TouchableOpacity hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} activeOpacity={0.7}>
+            <IconSymbol name="bell" size={24} color={Colors.textSecondary} />
+          </TouchableOpacity>
+          <View style={styles.avatar}>
+            <RNText style={styles.avatarText}>G</RNText>
+          </View>
+        </View>
       </View>
 
       {/* ── Storage Hero Card ── */}
       <Card style={styles.heroCard}>
-        <Text variant="hero">{formatBytes(totalFreedBytes)}</Text>
+        <View style={styles.heroTopRow}>
+          <Text variant="hero">{formatBytes(totalFreedBytes)}</Text>
+          {todayFreedBytes > 0 && (
+            <View style={styles.todayBadge}>
+              <RNText style={styles.todayBadgeText}>+{formatBytes(todayFreedBytes)} today</RNText>
+            </View>
+          )}
+        </View>
         <Text variant="label" style={styles.heroLabel}>
           Total Space Freed
         </Text>
@@ -158,20 +174,25 @@ export default function HomeScreen() {
 
       {/* ── Stats row ── */}
       <View style={styles.statsRow}>
-        <Card style={styles.statCard}>
-          <Text variant="heading">{photosReviewed}</Text>
+        {/* Photos cleaned — green */}
+        <Card style={[styles.statCard, { borderColor: 'rgba(34,197,94,0.35)' }]}>
+          <RNText style={[styles.statNumber, { color: Colors.success }]}>{photosReviewed}</RNText>
           <Text variant="caption" style={styles.statLabel}>
             Photos{'\n'}cleaned
           </Text>
         </Card>
-        <Card style={styles.statCard}>
-          <Text variant="heading">{sessionsCompleted}</Text>
+
+        {/* Sessions done — blue */}
+        <Card style={[styles.statCard, { borderColor: 'rgba(59,130,246,0.35)' }]}>
+          <RNText style={[styles.statNumber, { color: Colors.info }]}>{sessionsCompleted}</RNText>
           <Text variant="caption" style={styles.statLabel}>
             Sessions{'\n'}done
           </Text>
         </Card>
-        <Card style={styles.statCard}>
-          <Text variant="heading">{todayReviewed}</Text>
+
+        {/* Today — orange */}
+        <Card style={[styles.statCard, { borderColor: 'rgba(249,115,22,0.35)' }]}>
+          <RNText style={[styles.statNumber, { color: Colors.primary }]}>{todayReviewed}</RNText>
           <Text variant="caption" style={styles.statLabel}>
             {'\n'}Today
           </Text>
@@ -181,7 +202,7 @@ export default function HomeScreen() {
       {/* ── Quick Clean ── */}
       <Button
         variant="primary"
-        label="QUICK CLEAN"
+        label="QUICK CLEAN  →"
         onPress={handleQuickClean}
         style={styles.quickCleanButton}
       />
@@ -214,7 +235,7 @@ export default function HomeScreen() {
 
       {/* ── Sessions section ── */}
       <Text variant="heading" style={styles.sectionTitle}>
-        Sessions
+        SESSIONS FOR YOU
       </Text>
 
       {clusters.length === 0 ? (
@@ -258,8 +279,8 @@ export default function HomeScreen() {
                   </Text>
                 </View>
                 <Button
-                  variant={isCompleted ? 'ghost' : 'secondary'}
-                  label={isCompleted ? 'Done' : 'Go'}
+                  variant={isCompleted ? 'ghost' : 'primary'}
+                  label={isCompleted ? 'Done' : isInProgress ? 'Continue' : 'Go'}
                   disabled={isCompleted}
                   onPress={() => handleGoCluster(cluster)}
                 />
@@ -301,10 +322,61 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 4,
   },
+  logoRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+  },
+  logoClean: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: Colors.primary,
+  },
+  logoSwipe: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: Colors.textPrimary,
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  avatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
+  },
 
   // ── Hero card ──────────────────────────────────────────────────────────────
   heroCard: {
     gap: 4,
+  },
+  heroTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  todayBadge: {
+    backgroundColor: 'rgba(249,115,22,0.18)',
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(249,115,22,0.35)',
+  },
+  todayBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.primary,
   },
   heroLabel: {
     marginTop: 2,
@@ -323,6 +395,10 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     gap: 2,
+  },
+  statNumber: {
+    fontSize: 22,
+    fontWeight: '700',
   },
   statLabel: {
     textAlign: 'center',
