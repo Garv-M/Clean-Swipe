@@ -639,6 +639,11 @@ export default function SwipeScreen() {
     const record = useSessionStore.getState().undo(sId);
     if (!record) return;
 
+    useStatsStore.getState().undoReviewed();
+    if (record.decision === Decision.DELETE_STAGED && record.bytes) {
+      useStatsStore.getState().undoFreed(record.bytes);
+    }
+
     if (record.decision === Decision.DELETE_STAGED) {
       useTrashStore.getState().removeFromStaged(record.assetId);
     }

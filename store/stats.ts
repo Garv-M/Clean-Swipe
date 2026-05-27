@@ -48,6 +48,9 @@ interface StatsState {
   /** Increment `photosReviewed` and `todayReviewed`. Defaults to 1. */
   recordReviewed(count?: number): void;
 
+  undoFreed(bytes: number): void;
+  undoReviewed(count?: number): void;
+
   recordFavorite(): void;
   recordSessionCompleted(): void;
 
@@ -74,6 +77,44 @@ export const useStatsStore = create<StatsState>()(
       todayReviewed: 0,
       todayFreedBytes: 0,
       lastResetDate: todayDateString(),
+
+      undoFreed(bytes) {
+        const month = currentMonthKey();
+        const today = todayDateString();
+        set((state) => {
+          const isToday = state.lastResetDate === today;
+          // Ensure we don't carry over yesterday's stats if the first action of the day is an undo
+          const currentTodayFreed = isToday ? state.todayFreedBytes : 0;
+          const currentTodayReviewed = isToday ? state.todayReviewed : 0;
+
+          return {
+            totalFreedBytes: Math.max(0, state.totalFreedBytes - bytes),
+            todayFreedBytes: Math.max(0, currentTodayFreed - bytes),
+            todayReviewed: currentTodayReviewed,
+            lastResetDate: today,
+            monthlyFreedBytes: {
+              ...state.monthlyFreedBytes,
+              [month]: Math.max(0, (state.monthlyFreedBytes[month] ?? 0) - bytes),
+            },
+          };
+        });
+      },
+
+      undoReviewed(count = 1) {
+        const today = todayDateString();
+        set((state) => {
+          const isToday = state.lastResetDate === today;
+          const currentTodayReviewed = isToday ? state.todayReviewed : 0;
+          const currentTodayFreed = isToday ? state.todayFreedBytes : 0;
+
+          return {
+            photosReviewed: Math.max(0, state.photosReviewed - count),
+            todayReviewed: Math.max(0, currentTodayReviewed - count),
+            todayFreedBytes: currentTodayFreed,
+            lastResetDate: today,
+          };
+        });
+      },
 
       recordFreed(bytes) {
         const month = currentMonthKey();
