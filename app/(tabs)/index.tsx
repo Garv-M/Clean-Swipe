@@ -129,11 +129,16 @@ export default function HomeScreen() {
     // Reset so re-navigating to the same highlight replays the animation.
     highlightAnim.setValue(0);
 
-    Animated.sequence([
+    const anim = Animated.sequence([
       Animated.timing(highlightAnim, { toValue: 1, duration: 300, useNativeDriver: false }),
       Animated.delay(600),
       Animated.timing(highlightAnim, { toValue: 0, duration: 600, useNativeDriver: false }),
-    ]).start();
+    ]);
+    anim.start();
+    return () => {
+      anim.stop();
+      highlightAnim.setValue(0);
+    };
   }, [highlight, highlightAnim]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────
