@@ -177,6 +177,15 @@ export default function BinScreen() {
     });
   }, [confirmed]);
 
+  // Prune rescued IDs that no longer exist in staged (e.g., undone externally).
+  useEffect(() => {
+    const liveIds = new Set(staged.map((s) => s.assetId));
+    setRescueSelectedIds((prev) => {
+      const filtered = new Set([...prev].filter((id) => liveIds.has(id)));
+      return filtered.size === prev.size ? prev : filtered;
+    });
+  }, [staged]);
+
   // ── Derived values ───────────────────────────────────────────────────────
 
   /**
@@ -242,14 +251,16 @@ export default function BinScreen() {
           style: 'destructive',
           onPress: () => {
             (async () => {
-              // rescue checked
-              for (const id of rescueSelectedIds) removeFromStaged(id);
-              // delete unchecked
-              if (uncheckedIds.length > 0) {
-                confirmStaged(uncheckedIds);
-                await executeDelete(uncheckedIds, buildBytesMap(uncheckedIds, assetMap));
+              try {
+                for (const id of rescueSelectedIds) removeFromStaged(id);
+                if (uncheckedIds.length > 0) {
+                  confirmStaged(uncheckedIds);
+                  await executeDelete(uncheckedIds, buildBytesMap(uncheckedIds, assetMap));
+                }
+                setRescueSelectedIds(new Set());
+              } catch (err) {
+                if (__DEV__) console.error('[BinScreen] deleteAll failed', err);
               }
-              setRescueSelectedIds(new Set());
             })();
           },
         },
@@ -676,7 +687,7 @@ const styles = StyleSheet.create({
   checkboxTick: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#fff',
+    color: Colors.textPrimary,
     lineHeight: 14,
   },
 
@@ -771,7 +782,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   modalCloseTxt: {
-    color: '#fff',
+    color: Colors.textPrimary,
     fontSize: 16,
     fontWeight: '600',
   },
