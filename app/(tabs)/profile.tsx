@@ -12,7 +12,7 @@
  *   • Tappable rows with chevron icon
  */
 
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   Alert,
   ScrollView,
@@ -22,6 +22,7 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import Svg, { Rect, Text as SvgText } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -29,6 +30,15 @@ import { Card } from '@/components/ui/card';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Text } from '@/components/ui/text';
 import { Colors } from '@/constants/theme';
+import { runBackgroundChecks } from '@/services/backgroundTask';
+import {
+  scheduleMonthlyDigestNotification,
+  scheduleNewPhotosNotification,
+  schedulePendingCleanupNotification,
+  schedulePostTripNotification,
+  scheduleStoragePressureNotification,
+} from '@/services/notifications';
+import { useClusterStore } from '@/store/cluster';
 import { useSettingsStore } from '@/store/settings';
 import { useStatsStore } from '@/store/stats';
 import { formatBytes } from '@/utils/format';
@@ -82,6 +92,7 @@ const SETTINGS_ROWS = [
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const { width: screenWidth } = useWindowDimensions();
+  const router = useRouter();
 
   // ── Store selectors ───────────────────────────────────────────────────────
   const totalFreedBytes = useStatsStore((s) => s.totalFreedBytes);
@@ -90,6 +101,10 @@ export default function ProfileScreen() {
   const sessionsCompleted = useStatsStore((s) => s.sessionsCompleted);
   const monthlyFreedBytes = useStatsStore((s) => s.monthlyFreedBytes);
   const memberSince = useSettingsStore((s) => s.memberSince);
+  const clusters = useClusterStore((s) => s.clusters);
+
+  // ── Debug state ───────────────────────────────────────────────────────────
+  const [debugStatus, setDebugStatus] = useState<string | null>(null);
 
   // ── Chart data ────────────────────────────────────────────────────────────
   const chartData = useMemo(() => {
@@ -123,6 +138,17 @@ export default function ProfileScreen() {
   // ── Handler ───────────────────────────────────────────────────────────────
   const handleComingSoon = useCallback(() => {
     Alert.alert('Coming soon');
+  }, []);
+
+  // ── Debug handlers (DEV only) ─────────────────────────────────────────────
+  const debugRun = useCallback(async (label: string, fn: () => Promise<void>) => {
+    setDebugStatus(`Running: ${label}…`);
+    try {
+      await fn();
+      setDebugStatus(`✓ ${label} — notification sent. Background the app to see it.`);
+    } catch (e: any) {
+      setDebugStatus(`✗ ${label}: ${e?.message ?? e}`);
+    }
   }, []);
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -258,6 +284,88 @@ export default function ProfileScreen() {
           </View>
         ))}
       </View>
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          DEV — Notification test panel (only visible in development builds)
+      ═══════════════════════════════════════════════════════════════════ */}
+      {__DEV__ && (
+        <>
+          <Text variant="label" style={styles.sectionHeader}>
+            DEV — NOTIFICATION TESTS
+          </Text>
+
+          {debugStatus ? (
+            <RNText style={styles.debugStatus}>{debugStatus}</RNText>
+          ) : null}
+
+          <View style={styles.debugPanel}>
+            <TouchableOpacity
+              style={styles.debugButton}
+              onPress={() => debugRun('New Photos (150)', () => scheduleNewPhotosNotification(150))}>
+              <RNText style={styles.debugButtonText}>📷  New Photos (150)</RNText>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.debugButton}
+              onPress={() => debugRun('Storage Pressure (87%)', () => scheduleStoragePressureNotification(87))}>
+              <RNText style={styles.debugButtonText}>💾  Storage Pressure (87%)</RNText>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.debugButton}
+              onPress={() => {
+                const firstCluster = clusters[0];
+                const id = firstCluster?.id ?? 'test-cluster-id';
+                const name = firstCluster?.name ?? 'Goa Trip';
+                const count = firstCluster?.assetCount ?? 340;
+                debugRun('Post-Trip', () => schedulePostTripNotification(id, name, count));
+              }}>
+              <RNText style={styles.debugButtonText}>
+                ✈️  Post-Trip {clusters[0] ? `(${clusters[0].name})` : '(fake)'}
+              </RNText>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.debugButton}
+              onPress={() => debugRun('Pending Cleanup (42)', () => schedulePendingCleanupNotification(42))}>
+              <RNText style={styles.debugButtonText}>🗑️  Pending Cleanup (42)</RNText>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.debugButton}
+              onPress={() => debugRun('Monthly Digest', () => scheduleMonthlyDigestNotification('April 2026', '1.4 GB', 230))}>
+              <RNText style={styles.debugButtonText}>📅  Monthly Digest</RNText>
+            </TouchableOpacity>
+
+            <View style={styles.debugDivider} />
+
+            <TouchableOpacity
+              style={[styles.debugButton, styles.debugButtonSecondary]}
+              onPress={async () => {
+                setDebugStatus('Running all background checks…');
+                try {
+                  const result = await runBackgroundChecks();
+                  setDebugStatus(`Background checks done — result: ${result}`);
+                } catch (e: any) {
+                  setDebugStatus(`Background checks failed: ${e?.message ?? e}`);
+                }
+              }}>
+              <RNText style={styles.debugButtonText}>⚙️  Run Background Checks</RNText>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.debugButton, styles.debugButtonSecondary]}
+              onPress={() => {
+                const id = clusters[0]?.id ?? 'test-cluster-id';
+                router.push({ pathname: '/(tabs)', params: { highlight: id } });
+              }}>
+              <RNText style={styles.debugButtonText}>
+                🎯  Test Deep Link {clusters[0] ? `→ ${clusters[0].name}` : '(no clusters yet)'}
+              </RNText>
+            </TouchableOpacity>
+          </View>
+        </>
+      )}
     </ScrollView>
   );
 }
@@ -345,5 +453,39 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     backgroundColor: Colors.border,
     marginHorizontal: CONTENT_PADDING,
+  },
+
+  // ── DEV debug panel ────────────────────────────────────────────────────────
+  debugStatus: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    paddingHorizontal: 4,
+    fontStyle: 'italic',
+  },
+  debugPanel: {
+    gap: 6,
+    marginBottom: 8,
+  },
+  debugButton: {
+    backgroundColor: 'rgba(249,115,22,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(249,115,22,0.3)',
+    borderRadius: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
+  },
+  debugButtonSecondary: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderColor: Colors.border,
+  },
+  debugButtonText: {
+    fontSize: 13,
+    color: Colors.textPrimary,
+    fontWeight: '500',
+  },
+  debugDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: Colors.border,
+    marginVertical: 4,
   },
 });

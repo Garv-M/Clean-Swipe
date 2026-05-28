@@ -19,7 +19,6 @@ import * as Notifications from 'expo-notifications';
 // foreground. Must be set at module load time before any scheduling occurs.
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
     shouldShowBanner: true,
