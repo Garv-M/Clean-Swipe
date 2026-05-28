@@ -5,8 +5,9 @@
  *
  *  Section A  (Pending Cleanup)  – staged assets the user marked for deletion
  *                                   but hasn't confirmed yet. Tap a tile to
- *                                   rescue (remove from staged). "Delete All"
- *                                   bar confirms all staged → queued for deletion.
+ *                                   toggle rescue (checkbox = keep). Long press
+ *                                   to view full screen. "Delete All" deletes
+ *                                   unchecked items and rescues checked ones.
  *
  *  Section B  (Recently Deleted) – confirmed assets pending OS-level removal.
  *                                   Tap tiles to select, then restore to cancel.
@@ -19,6 +20,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
@@ -33,7 +35,7 @@ import { Card } from '@/components/ui/card';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Text } from '@/components/ui/text';
 import { Colors } from '@/constants/theme';
-import { confirmStaged } from '@/services/deletion';
+import { confirmStaged, executeDelete } from '@/services/deletion';
 import { getAssetsByIds } from '@/services/mediaLibrary';
 import { useSessionStore } from '@/store/session';
 import { useSettingsStore } from '@/store/settings';
@@ -48,8 +50,9 @@ import { formatBytes } from '@/utils/format';
 const NUM_COLUMNS = 3;
 const TILE_GAP = 2;
 const SUSPICIOUS_COLOR = Colors.warning;
-// Must match the rendered height of the sticky bottom bar (padding 12*2 + Button height 48 + gap 4).
-const BOTTOM_BAR_HEIGHT = 80;
+// Must match the rendered height of the sticky bottom bar.
+// padding 12*2 + Button height 48 + gap 4 + optional caption ~20 = ~96 → 104.
+const BOTTOM_BAR_HEIGHT = 104;
 /** Horizontal padding applied to the scroll content. */
 const CONTENT_PADDING_H = 16;
 
@@ -63,6 +66,18 @@ function daysRemaining(expiresAt: number): number {
 
 function totalBytes(assetIds: string[], assetMap: Record<string, Asset>): number {
   return assetIds.reduce((sum, id) => sum + (assetMap[id]?.bytes ?? 0), 0);
+}
+
+function buildBytesMap(
+  assetIds: string[],
+  assetMap: Record<string, Asset>,
+): Record<string, number> {
+  const map: Record<string, number> = {};
+  for (const id of assetIds) {
+    const bytes = assetMap[id]?.bytes;
+    if (bytes != null) map[id] = bytes;
+  }
+  return map;
 }
 
 // ---------------------------------------------------------------------------
@@ -95,6 +110,10 @@ export default function BinScreen() {
   // Show a spinner on initial load when there are items to fetch.
   const [loading, setLoading] = useState(staged.length > 0 || confirmed.length > 0);
   const [selectedConfirmedIds, setSelectedConfirmedIds] = useState<Set<string>>(new Set());
+  /** IDs of staged items the user has checked — they will be rescued, not deleted. */
+  const [rescueSelectedIds, setRescueSelectedIds] = useState<Set<string>>(new Set());
+  /** Asset shown in the full-screen preview modal; null means closed. */
+  const [previewAsset, setPreviewAsset] = useState<Asset | null>(null);
 
   // Track which IDs have been fetched so we never re-request the same asset.
   const fetchedIdsRef = useRef<Set<string>>(new Set());
@@ -182,31 +201,74 @@ export default function BinScreen() {
     }));
   }, [staged]);
 
-  /** Sum of bytes for all staged assets (used in the "Delete All" label). */
-  const totalStagedBytes = useMemo(
-    () => totalBytes(staged.map((s) => s.assetId), assetMap),
-    [staged, assetMap],
+  /** Count of staged items that are NOT checked for rescue (will be deleted). */
+  const uncheckedCount = staged.length - rescueSelectedIds.size;
+
+  /** Sum of bytes for unchecked staged items only (used in the "Delete All" label). */
+  const uncheckedStagedBytes = useMemo(
+    () =>
+      totalBytes(
+        staged.filter((s) => !rescueSelectedIds.has(s.assetId)).map((s) => s.assetId),
+        assetMap,
+      ),
+    [staged, rescueSelectedIds, assetMap],
   );
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
-  /** Prompt the user, then confirm all staged items → queued for deletion. */
+  /**
+   * Prompt the user, then rescue checked items and permanently delete the
+   * unchecked ones via confirmStaged + executeDelete.
+   */
   const handleDeleteAll = useCallback(() => {
+    // Close any open full-screen preview before showing the confirmation alert.
+    setPreviewAsset(null);
+
     const allStagedIds = staged.map((s) => s.assetId);
-    const count = allStagedIds.length;
+    const uncheckedIds = allStagedIds.filter((id) => !rescueSelectedIds.has(id));
+    const uCount = uncheckedIds.length;
+    const rCount = rescueSelectedIds.size;
+    const pluralize = (n: number) => (n !== 1 ? 's' : '');
+
     Alert.alert(
-      `Delete ${count} photo${count !== 1 ? 's' : ''}?`,
-      "They'll be queued for permanent deletion.",
+      `Delete ${uCount} photo${pluralize(uCount)}?`,
+      `This will delete ${uCount} photo${pluralize(uCount)} from your library.${
+        rCount > 0 ? ` ${rCount} checked photo${pluralize(rCount)} will be kept.` : ''
+      }`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: () => confirmStaged(allStagedIds),
+          onPress: () => {
+            (async () => {
+              // rescue checked
+              for (const id of rescueSelectedIds) removeFromStaged(id);
+              // delete unchecked
+              if (uncheckedIds.length > 0) {
+                confirmStaged(uncheckedIds);
+                await executeDelete(uncheckedIds, buildBytesMap(uncheckedIds, assetMap));
+              }
+              setRescueSelectedIds(new Set());
+            })();
+          },
         },
       ],
     );
-  }, [staged]);
+  }, [staged, rescueSelectedIds, removeFromStaged, assetMap]);
+
+  /** Toggle the rescue-checkbox for a staged asset (tap behavior). */
+  const toggleRescue = useCallback((assetId: string) => {
+    setRescueSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(assetId)) {
+        next.delete(assetId);
+      } else {
+        next.add(assetId);
+      }
+      return next;
+    });
+  }, []);
 
   /** Toggle a confirmed asset's selection state. */
   const handleToggleSelect = useCallback((assetId: string) => {
@@ -283,7 +345,7 @@ export default function BinScreen() {
 
             <Card>
               <Text variant="body" style={styles.bannerText}>
-                You marked these for deletion but didn't confirm. Review and rescue, or delete all.
+                Tap to rescue (check = keep). Long press to preview. Delete All removes unchecked photos.
               </Text>
             </Card>
 
@@ -300,10 +362,12 @@ export default function BinScreen() {
                   <View style={styles.grid}>
                     {items.map((item) => {
                       const asset = assetMap[item.assetId];
+                      const isRescued = rescueSelectedIds.has(item.assetId);
                       return (
                         <TouchableOpacity
                           key={item.assetId}
-                          onPress={() => removeFromStaged(item.assetId)}
+                          onPress={() => toggleRescue(item.assetId)}
+                          onLongPress={() => setPreviewAsset(assetMap[item.assetId] ?? null)}
                           activeOpacity={0.7}
                           style={[
                             styles.tile,
@@ -319,6 +383,11 @@ export default function BinScreen() {
                           ) : (
                             <View style={[StyleSheet.absoluteFill, styles.tilePlaceholder]} />
                           )}
+
+                          {/* Green tint overlay when the tile is checked for rescue */}
+                          {isRescued && <View style={styles.rescuedOverlay} />}
+
+                          {/* Suspicious badge (top-left) */}
                           {item.isSuspicious && (
                             <View style={styles.suspiciousBadge}>
                               <Text variant="caption" style={styles.suspiciousBadgeText}>
@@ -326,6 +395,17 @@ export default function BinScreen() {
                               </Text>
                             </View>
                           )}
+
+                          {/* Checkbox indicator (top-right) — always visible */}
+                          <View
+                            style={[
+                              styles.checkboxOuter,
+                              isRescued && styles.checkboxChecked,
+                            ]}>
+                            {isRescued && (
+                              <Text style={styles.checkboxTick}>✓</Text>
+                            )}
+                          </View>
                         </TouchableOpacity>
                       );
                     })}
@@ -415,13 +495,53 @@ export default function BinScreen() {
       {showDeleteAllBar && (
         <View style={[styles.bottomBar, { bottom: insets.bottom }]}>
           <Button
-            variant="destructive"
-            label={`Delete All (free ${formatBytes(totalStagedBytes)})`}
+            variant={uncheckedCount === 0 ? 'ghost' : 'destructive'}
+            label={
+              uncheckedCount === 0
+                ? 'All rescued \u2713'
+                : `Delete ${uncheckedCount} photo${uncheckedCount !== 1 ? 's' : ''} (free ${formatBytes(uncheckedStagedBytes)})`
+            }
             onPress={handleDeleteAll}
+            disabled={uncheckedCount === 0}
             style={styles.fullWidth}
           />
+          {rescueSelectedIds.size > 0 && (
+            <Text variant="caption" style={styles.rescueCountLabel}>
+              {rescueSelectedIds.size} photo{rescueSelectedIds.size !== 1 ? 's' : ''} will be kept
+            </Text>
+          )}
         </View>
       )}
+
+      {/* ── Full-screen preview modal ──────────────────────────────────── */}
+      <Modal
+        visible={previewAsset !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPreviewAsset(null)}>
+        <View style={styles.modalOverlay}>
+          <Image
+            source={{ uri: previewAsset?.uri }}
+            style={styles.modalImage}
+            contentFit="contain"
+          />
+          {/* Close button */}
+          <TouchableOpacity
+            style={styles.modalCloseBtn}
+            onPress={() => setPreviewAsset(null)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <Text style={styles.modalCloseTxt}>✕</Text>
+          </TouchableOpacity>
+          {/* Filename */}
+          {previewAsset?.filename && (
+            <View style={styles.modalFilenameBar}>
+              <Text variant="caption" style={styles.modalFilenameText}>
+                {previewAsset.filename}
+              </Text>
+            </View>
+          )}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -535,7 +655,38 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
   },
 
-  // ── Days remaining overlay (bottom strip of tile) ──────────────────────────
+  // ── Checkbox indicator (top-right corner of staged tile) ──────────────────
+  checkboxOuter: {
+    position: 'absolute',
+    top: 5,
+    right: 5,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.8)',
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxChecked: {
+    backgroundColor: Colors.success,
+    borderColor: Colors.success,
+  },
+  checkboxTick: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#fff',
+    lineHeight: 14,
+  },
+
+  // ── Rescued overlay (green tint over checked staged tiles) ─────────────────
+  rescuedOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(34,197,94,0.25)',
+  },
+
+  // ── Days remaining overlay (bottom strip of confirmed tile) ───────────────
   daysOverlay: {
     position: 'absolute',
     bottom: 0,
@@ -551,7 +702,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // ── Selected overlay (full-tile green tint + checkmark) ────────────────────
+  // ── Selected overlay (full-tile green tint + checkmark, Section B) ─────────
   selectedOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(34,197,94,0.35)',
@@ -585,10 +736,54 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
     borderTopWidth: 1,
     borderTopColor: Colors.border,
+    gap: 4,
+  },
+  rescueCountLabel: {
+    color: Colors.success,
+    textAlign: 'center',
   },
 
   // ── Shared ─────────────────────────────────────────────────────────────────
   fullWidth: {
     width: '100%',
+  },
+
+  // ── Full-screen preview modal ──────────────────────────────────────────────
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.92)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalImage: {
+    width: '100%',
+    height: '80%',
+  },
+  modalCloseBtn: {
+    position: 'absolute',
+    top: 52,
+    right: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCloseTxt: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  modalFilenameBar: {
+    position: 'absolute',
+    bottom: 40,
+    left: 20,
+    right: 20,
+    alignItems: 'center',
+  },
+  modalFilenameText: {
+    color: 'rgba(255,255,255,0.7)',
+    textAlign: 'center',
   },
 });
