@@ -37,6 +37,14 @@ import type { Asset, EventCluster } from '@/types';
 /** Name used to register the background fetch task with expo-task-manager. */
 export const BACKGROUND_FETCH_TASK = 'clean-swipe-background-fetch';
 
+const FALLBACK_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;          // 7 days
+const DISK_PRESSURE_PCT = 85;
+const MIN_TRIP_PHOTOS = 10;
+const PENDING_CLEANUP_COOLDOWN_MS = 3 * 24 * 60 * 60 * 1000;   // 3 days
+const MIN_DAYS_BEFORE_CLEANUP_NUDGE = 3;
+const MAX_DAYS_BEFORE_CLEANUP_NUDGE = 14;
+const BACKGROUND_FETCH_INTERVAL_SEC = 15 * 60;                  // 15 minutes
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -81,7 +89,8 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
     //    one of the defined thresholds.
     // -----------------------------------------------------------------------
     const { lastClusteredAt } = useClusterStore.getState();
-    const since = lastClusteredAt ?? Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const rawSince = lastClusteredAt ?? (Date.now() - FALLBACK_LOOKBACK_MS);
+    const since = Math.min(rawSince, Date.now());
 
     const { assets: newAssets } = await fetchAssetsPage({ createdAfter: since });
     const newPhotoCount = newAssets.length;
@@ -99,7 +108,7 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
     if (totalDisk > 0) {
       const freeDisk = Paths.availableDiskSpace;
       const usedPct = Math.round((1 - freeDisk / totalDisk) * 100);
-      if (usedPct >= 85) {
+      if (usedPct >= DISK_PRESSURE_PCT) {
         await scheduleStoragePressureNotification(usedPct);
         notified = true;
       }
@@ -133,7 +142,7 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
 
     for (const [dayKey, dayAssets] of dayMap) {
       // Require a meaningful batch to avoid noise from scattered uploads.
-      if (dayAssets.length < 10) continue;
+      if (dayAssets.length < MIN_TRIP_PHOTOS) continue;
 
       // Skip if every asset in this day group is already tracked — the group
       // was already picked up by a previous clustering run.
@@ -212,9 +221,9 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
 
       const notifCooldownPassed =
         lastPendingCleanupNotifiedAt === null ||
-        Date.now() - lastPendingCleanupNotifiedAt > 3 * 24 * 60 * 60 * 1000;
+        Date.now() - lastPendingCleanupNotifiedAt > PENDING_CLEANUP_COOLDOWN_MS;
 
-      if (daysSinceOldest >= 3 && daysSinceOldest < 14 && notifCooldownPassed) {
+      if (daysSinceOldest >= MIN_DAYS_BEFORE_CLEANUP_NUDGE && daysSinceOldest < MAX_DAYS_BEFORE_CLEANUP_NUDGE && notifCooldownPassed) {
         await schedulePendingCleanupNotification(staged.length);
         useSettingsStore.getState().setLastPendingCleanupNotifiedAt(Date.now());
         notified = true;
@@ -279,7 +288,7 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
  */
 export async function registerBackgroundTask(): Promise<void> {
   await BackgroundFetch.registerTaskAsync(BACKGROUND_FETCH_TASK, {
-    minimumInterval: 15 * 60, // 15 minutes in seconds
+    minimumInterval: BACKGROUND_FETCH_INTERVAL_SEC,
     stopOnTerminate: false,   // Android: keep running after app is killed
     startOnBoot: true,        // Android: restart after device reboot
   });
