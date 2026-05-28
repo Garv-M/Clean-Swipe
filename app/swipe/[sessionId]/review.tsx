@@ -42,7 +42,7 @@ const NUM_COLUMNS = 3;
 /** Pixel gap between tiles in both axes. */
 const TILE_GAP = 2;
 /** Yellow border colour applied to suspicious tiles. */
-const SUSPICIOUS_BORDER_COLOR = '#EAB308';
+const SUSPICIOUS_BORDER_COLOR = Colors.warning;
 const SUSPICIOUS_BORDER_WIDTH = 2;
 
 // ---------------------------------------------------------------------------

@@ -6,6 +6,7 @@ export const Colors = {
   success: '#22C55E',           // green
   info: '#3B82F6',              // blue
   destructive: '#EF4444',       // red
+  warning: '#EAB308',           // yellow
   background: '#1F2937',        // dark slate
   cardFrom: '#283548',
   cardTo: '#232f3e',

@@ -47,7 +47,8 @@ import { formatBytes } from '@/utils/format';
 
 const NUM_COLUMNS = 3;
 const TILE_GAP = 2;
-const SUSPICIOUS_COLOR = '#EAB308';
+const SUSPICIOUS_COLOR = Colors.warning;
+// Must match the rendered height of the sticky bottom bar (padding 12*2 + Button height 48 + gap 4).
 const BOTTOM_BAR_HEIGHT = 80;
 /** Horizontal padding applied to the scroll content. */
 const CONTENT_PADDING_H = 16;
@@ -77,6 +78,7 @@ export default function BinScreen() {
   const tileSize = Math.floor(
     (screenWidth - CONTENT_PADDING_H * 2 - TILE_GAP * (NUM_COLUMNS - 1)) / NUM_COLUMNS,
   );
+  const tileSizeStyle = useMemo(() => ({ width: tileSize, height: tileSize }), [tileSize]);
 
   // ── Store selectors ─────────────────────────────────────────────────────
 
@@ -100,6 +102,8 @@ export default function BinScreen() {
   // ── Asset loading ────────────────────────────────────────────────────────
 
   useEffect(() => {
+    let cancelled = false;
+
     const allIds = [
       ...staged.map((s) => s.assetId),
       ...confirmed.map((c) => c.assetId),
@@ -122,8 +126,13 @@ export default function BinScreen() {
       setLoading(true);
     }
 
+    // Mark IDs as fetched before the async call to prevent duplicate requests
+    // from concurrent renders triggering the same fetch twice.
+    for (const id of missingIds) fetchedIdsRef.current.add(id);
+
     getAssetsByIds(missingIds)
       .then((assets) => {
+        if (cancelled) return;
         setAssetMap((prev) => {
           const next = { ...prev };
           for (const asset of assets) {
@@ -131,15 +140,23 @@ export default function BinScreen() {
           }
           return next;
         });
-        for (const id of missingIds) {
-          fetchedIdsRef.current.add(id);
-        }
         setLoading(false);
       })
       .catch(() => {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       });
+
+    return () => { cancelled = true; };
   }, [staged, confirmed]);
+
+  // Remove selected IDs that no longer exist in confirmed (e.g. purged externally).
+  useEffect(() => {
+    const liveIds = new Set(confirmed.map((c) => c.assetId));
+    setSelectedConfirmedIds((prev) => {
+      const filtered = new Set([...prev].filter((id) => liveIds.has(id)));
+      return filtered.size === prev.size ? prev : filtered;
+    });
+  }, [confirmed]);
 
   // ── Derived values ───────────────────────────────────────────────────────
 
@@ -172,14 +189,6 @@ export default function BinScreen() {
   );
 
   // ── Handlers ─────────────────────────────────────────────────────────────
-
-  /** Rescue a single asset — removes it from the staged queue. */
-  const handleRescue = useCallback(
-    (assetId: string) => {
-      removeFromStaged(assetId);
-    },
-    [removeFromStaged],
-  );
 
   /** Prompt the user, then confirm all staged items → queued for deletion. */
   const handleDeleteAll = useCallback(() => {
@@ -294,11 +303,11 @@ export default function BinScreen() {
                       return (
                         <TouchableOpacity
                           key={item.assetId}
-                          onPress={() => handleRescue(item.assetId)}
+                          onPress={() => removeFromStaged(item.assetId)}
                           activeOpacity={0.7}
                           style={[
                             styles.tile,
-                            { width: tileSize, height: tileSize },
+                            tileSizeStyle,
                             item.isSuspicious && styles.suspiciousTile,
                           ]}>
                           {asset?.uri ? (
@@ -350,7 +359,7 @@ export default function BinScreen() {
                     activeOpacity={0.8}
                     style={[
                       styles.tile,
-                      { width: tileSize, height: tileSize },
+                      tileSizeStyle,
                       isSelected && styles.selectedTile,
                     ]}>
                     {asset?.uri ? (
