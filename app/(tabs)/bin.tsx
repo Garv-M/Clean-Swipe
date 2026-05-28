@@ -1,19 +1,19 @@
 /**
  * app/(tabs)/bin.tsx
  *
- * Bin screen — two-section view for managing deleted photos:
+ * Bin screen — manages photos staged for deletion (Pending Cleanup).
  *
- *  Section A  (Pending Cleanup)  – staged assets the user marked for deletion
- *                                   but hasn't confirmed yet. Tap a tile to
- *                                   toggle rescue (checkbox = keep). Long press
- *                                   to view full screen. "Delete All" deletes
- *                                   unchecked items and rescues checked ones.
+ *  Section A  (Pending Cleanup) – staged assets the user marked for deletion
+ *                                  but hasn't confirmed yet. Tap a tile to
+ *                                  toggle rescue (checkbox = keep). Long press
+ *                                  to view full screen.
  *
- *  Section B  (Recently Deleted) – confirmed assets pending OS-level removal.
- *                                   Tap tiles to select, then restore to cancel.
- *
- * Sticky bottom bar shows "Delete All" when staged items exist.
- * Restore footer lives inside the scroll view below Section B.
+ *  Bottom bar behaviour:
+ *    - When items are checked for rescue:
+ *        [Rescue N selected]              ← success variant
+ *        [Delete M remaining (free X MB)] ← destructive variant
+ *    - When nothing is checked:
+ *        [Delete All (free X MB)]         ← destructive variant
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -38,7 +38,6 @@ import { Colors } from '@/constants/theme';
 import { confirmStaged, executeDelete } from '@/services/deletion';
 import { getAssetsByIds } from '@/services/mediaLibrary';
 import { useSessionStore } from '@/store/session';
-import { useSettingsStore } from '@/store/settings';
 import { useTrashStore } from '@/store/trash';
 import type { Asset } from '@/types';
 import { formatBytes } from '@/utils/format';
@@ -50,19 +49,14 @@ import { formatBytes } from '@/utils/format';
 const NUM_COLUMNS = 3;
 const TILE_GAP = 2;
 const SUSPICIOUS_COLOR = Colors.warning;
-// Must match the rendered height of the sticky bottom bar.
-// padding 12*2 + Button height 48 + gap 4 + optional caption ~20 = ~96 → 104.
-const BOTTOM_BAR_HEIGHT = 104;
+// Two stacked buttons: 2×48 + gaps + padding. Used as paddingBottom offset for scroll content.
+const BOTTOM_BAR_HEIGHT = 112;
 /** Horizontal padding applied to the scroll content. */
 const CONTENT_PADDING_H = 16;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function daysRemaining(expiresAt: number): number {
-  return Math.max(0, Math.ceil((expiresAt - Date.now()) / (24 * 60 * 60 * 1000)));
-}
 
 function totalBytes(assetIds: string[], assetMap: Record<string, Asset>): number {
   return assetIds.reduce((sum, id) => sum + (assetMap[id]?.bytes ?? 0), 0);
@@ -98,18 +92,14 @@ export default function BinScreen() {
   // ── Store selectors ─────────────────────────────────────────────────────
 
   const staged = useTrashStore((s) => s.staged);
-  const confirmed = useTrashStore((s) => s.confirmed);
   const removeFromStaged = useTrashStore((s) => s.removeFromStaged);
-  const removeAllConfirmed = useTrashStore((s) => s.removeAllConfirmed);
   const sessions = useSessionStore((s) => s.sessions);
-  const retentionDays = useSettingsStore((s) => s.retentionDays);
 
   // ── Local state ─────────────────────────────────────────────────────────
 
   const [assetMap, setAssetMap] = useState<Record<string, Asset>>({});
   // Show a spinner on initial load when there are items to fetch.
-  const [loading, setLoading] = useState(staged.length > 0 || confirmed.length > 0);
-  const [selectedConfirmedIds, setSelectedConfirmedIds] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(staged.length > 0);
   /** IDs of staged items the user has checked — they will be rescued, not deleted. */
   const [rescueSelectedIds, setRescueSelectedIds] = useState<Set<string>>(new Set());
   /** Asset shown in the full-screen preview modal; null means closed. */
@@ -123,10 +113,7 @@ export default function BinScreen() {
   useEffect(() => {
     let cancelled = false;
 
-    const allIds = [
-      ...staged.map((s) => s.assetId),
-      ...confirmed.map((c) => c.assetId),
-    ];
+    const allIds = staged.map((s) => s.assetId);
     const uniqueIds = [...new Set(allIds)];
 
     if (uniqueIds.length === 0) {
@@ -166,16 +153,7 @@ export default function BinScreen() {
       });
 
     return () => { cancelled = true; };
-  }, [staged, confirmed]);
-
-  // Remove selected IDs that no longer exist in confirmed (e.g. purged externally).
-  useEffect(() => {
-    const liveIds = new Set(confirmed.map((c) => c.assetId));
-    setSelectedConfirmedIds((prev) => {
-      const filtered = new Set([...prev].filter((id) => liveIds.has(id)));
-      return filtered.size === prev.size ? prev : filtered;
-    });
-  }, [confirmed]);
+  }, [staged]);
 
   // Prune rescued IDs that no longer exist in staged (e.g., undone externally).
   useEffect(() => {
@@ -213,7 +191,7 @@ export default function BinScreen() {
   /** Count of staged items that are NOT checked for rescue (will be deleted). */
   const uncheckedCount = staged.length - rescueSelectedIds.size;
 
-  /** Sum of bytes for unchecked staged items only (used in the "Delete All" label). */
+  /** Sum of bytes for unchecked staged items only (used in the delete button label). */
   const uncheckedStagedBytes = useMemo(
     () =>
       totalBytes(
@@ -226,6 +204,17 @@ export default function BinScreen() {
   // ── Handlers ─────────────────────────────────────────────────────────────
 
   /**
+   * Immediately rescues all checked staged items by removing them from the
+   * staged list. No deletion occurs. Clears the rescue selection afterwards.
+   */
+  const handleRescueSelected = useCallback(() => {
+    for (const id of rescueSelectedIds) {
+      removeFromStaged(id);
+    }
+    setRescueSelectedIds(new Set());
+  }, [rescueSelectedIds, removeFromStaged]);
+
+  /**
    * Prompt the user, then rescue checked items and permanently delete the
    * unchecked ones via confirmStaged + executeDelete.
    */
@@ -236,14 +225,11 @@ export default function BinScreen() {
     const allStagedIds = staged.map((s) => s.assetId);
     const uncheckedIds = allStagedIds.filter((id) => !rescueSelectedIds.has(id));
     const uCount = uncheckedIds.length;
-    const rCount = rescueSelectedIds.size;
     const pluralize = (n: number) => (n !== 1 ? 's' : '');
 
     Alert.alert(
       `Delete ${uCount} photo${pluralize(uCount)}?`,
-      `This will delete ${uCount} photo${pluralize(uCount)} from your library.${
-        rCount > 0 ? ` ${rCount} checked photo${pluralize(rCount)} will be kept.` : ''
-      }`,
+      `They'll be removed from your library.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -281,30 +267,9 @@ export default function BinScreen() {
     });
   }, []);
 
-  /** Toggle a confirmed asset's selection state. */
-  const handleToggleSelect = useCallback((assetId: string) => {
-    setSelectedConfirmedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(assetId)) {
-        next.delete(assetId);
-      } else {
-        next.add(assetId);
-      }
-      return next;
-    });
-  }, []);
-
-  /** Restore selected confirmed assets — removes them from the confirmed list
-   *  without any OS-level deletion. */
-  const handleRestore = useCallback(() => {
-    if (selectedConfirmedIds.size === 0) return;
-    removeAllConfirmed([...selectedConfirmedIds]);
-    setSelectedConfirmedIds(new Set());
-  }, [selectedConfirmedIds, removeAllConfirmed]);
-
   // ── Flags ────────────────────────────────────────────────────────────────
 
-  const isEmpty = staged.length === 0 && confirmed.length === 0;
+  const isEmpty = staged.length === 0;
   const showDeleteAllBar = staged.length > 0;
 
   // ── Loading state ────────────────────────────────────────────────────────
@@ -426,101 +391,30 @@ export default function BinScreen() {
             })}
           </View>
         )}
-
-        {/* ── Section B: Recently Deleted ──────────────────────────────── */}
-        {confirmed.length > 0 && (
-          <View style={styles.section}>
-            <Text variant="label" style={styles.sectionHeader}>
-              RECENTLY DELETED
-            </Text>
-            <Text variant="body" style={styles.sectionSubLabel}>
-              Tap to select for restore. Items expire after {retentionDays} days.
-            </Text>
-
-            <View style={styles.grid}>
-              {confirmed.map((item) => {
-                const asset = assetMap[item.assetId];
-                const isSelected = selectedConfirmedIds.has(item.assetId);
-                const days = daysRemaining(item.expiresAt);
-
-                return (
-                  <TouchableOpacity
-                    key={item.assetId}
-                    onPress={() => handleToggleSelect(item.assetId)}
-                    activeOpacity={0.8}
-                    style={[
-                      styles.tile,
-                      tileSizeStyle,
-                      isSelected && styles.selectedTile,
-                    ]}>
-                    {asset?.uri ? (
-                      <Image
-                        source={{ uri: asset.uri }}
-                        style={StyleSheet.absoluteFill}
-                        contentFit="cover"
-                      />
-                    ) : (
-                      <View style={[StyleSheet.absoluteFill, styles.tilePlaceholder]} />
-                    )}
-
-                    {/* Days remaining overlay at the bottom of the tile */}
-                    <View style={styles.daysOverlay}>
-                      <Text variant="caption" style={styles.daysText}>
-                        {days}d
-                      </Text>
-                    </View>
-
-                    {/* Green checkmark + tint overlay when selected */}
-                    {isSelected && (
-                      <View style={styles.selectedOverlay}>
-                        <Text variant="body" style={styles.checkmark}>
-                          ✓
-                        </Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            {/* Restore footer — non-sticky, lives inside scroll content */}
-            <View style={styles.restoreFooter}>
-              {selectedConfirmedIds.size > 0 ? (
-                <Button
-                  variant="secondary"
-                  label={`Restore ${selectedConfirmedIds.size} selected`}
-                  onPress={handleRestore}
-                  style={styles.fullWidth}
-                />
-              ) : (
-                <Text variant="label" style={styles.restoreHint}>
-                  Select photos above to restore
-                </Text>
-              )}
-            </View>
-          </View>
-        )}
       </ScrollView>
 
-      {/* ── Sticky bottom bar: Delete All ─────────────────────────────── */}
+      {/* ── Sticky bottom bar ─────────────────────────────────────────── */}
       {showDeleteAllBar && (
         <View style={[styles.bottomBar, { bottom: insets.bottom }]}>
+          {rescueSelectedIds.size > 0 && (
+            <Button
+              variant="secondary"
+              label={`Rescue ${rescueSelectedIds.size} selected`}
+              onPress={handleRescueSelected}
+              style={styles.fullWidth}
+            />
+          )}
           <Button
             variant={uncheckedCount === 0 ? 'ghost' : 'destructive'}
+            disabled={uncheckedCount === 0}
             label={
               uncheckedCount === 0
                 ? 'All rescued \u2713'
                 : `Delete ${uncheckedCount} photo${uncheckedCount !== 1 ? 's' : ''} (free ${formatBytes(uncheckedStagedBytes)})`
             }
             onPress={handleDeleteAll}
-            disabled={uncheckedCount === 0}
             style={styles.fullWidth}
           />
-          {rescueSelectedIds.size > 0 && (
-            <Text variant="caption" style={styles.rescueCountLabel}>
-              {rescueSelectedIds.size} photo{rescueSelectedIds.size !== 1 ? 's' : ''} will be kept
-            </Text>
-          )}
         </View>
       )}
 
@@ -609,10 +503,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     color: Colors.textSecondary,
   },
-  sectionSubLabel: {
-    color: Colors.textSecondary,
-    marginTop: -4,
-  },
   bannerText: {
     color: Colors.textSecondary,
   },
@@ -641,10 +531,6 @@ const styles = StyleSheet.create({
   suspiciousTile: {
     borderWidth: 2,
     borderColor: SUSPICIOUS_COLOR,
-  },
-  selectedTile: {
-    borderWidth: 2,
-    borderColor: Colors.success,
   },
   tilePlaceholder: {
     backgroundColor: Colors.cardFrom,
@@ -697,46 +583,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(34,197,94,0.25)',
   },
 
-  // ── Days remaining overlay (bottom strip of confirmed tile) ───────────────
-  daysOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    paddingVertical: 3,
-    alignItems: 'center',
-  },
-  daysText: {
-    color: Colors.textPrimary,
-    fontSize: 10,
-    fontWeight: '600',
-  },
-
-  // ── Selected overlay (full-tile green tint + checkmark, Section B) ─────────
-  selectedOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(34,197,94,0.35)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkmark: {
-    color: Colors.success,
-    fontSize: 22,
-    fontWeight: '700',
-  },
-
-  // ── Restore footer ─────────────────────────────────────────────────────────
-  restoreFooter: {
-    alignItems: 'center',
-    paddingTop: 4,
-    paddingBottom: 8,
-  },
-  restoreHint: {
-    color: Colors.textSecondary,
-    textAlign: 'center',
-  },
-
   // ── Sticky bottom bar ──────────────────────────────────────────────────────
   bottomBar: {
     position: 'absolute',
@@ -747,11 +593,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
     borderTopWidth: 1,
     borderTopColor: Colors.border,
-    gap: 4,
-  },
-  rescueCountLabel: {
-    color: Colors.success,
-    textAlign: 'center',
+    gap: 8,
   },
 
   // ── Shared ─────────────────────────────────────────────────────────────────
