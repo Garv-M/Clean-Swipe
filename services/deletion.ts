@@ -107,6 +107,11 @@ export async function executeDelete(
     useStatsStore.getState().recordFreed(freed);
   }
 
+  // Record how many assets were permanently deleted.
+  if (deleted.length > 0) {
+    useStatsStore.getState().recordDeleted(deleted.length);
+  }
+
   return { freed, failed };
 }
 

@@ -28,6 +28,7 @@ interface StatsState {
   totalFreedBytes: number;
   photosReviewed: number;
   favoritesCount: number;
+  photosDeleted: number;
   sessionsCompleted: number;
 
   /** Storage freed per calendar month. Key format: 'YYYY-MM'. */
@@ -41,6 +42,9 @@ interface StatsState {
 
   /** The 'YYYY-MM-DD' date when `todayReviewed` was last zeroed out. */
   lastResetDate: string;
+
+  /** Increment the count of assets permanently deleted from device. */
+  recordDeleted(count: number): void;
 
   /** Add `bytes` to the running total and to the current month's bucket. */
   recordFreed(bytes: number): void;
@@ -72,6 +76,7 @@ export const useStatsStore = create<StatsState>()(
       totalFreedBytes: 0,
       photosReviewed: 0,
       favoritesCount: 0,
+      photosDeleted: 0,
       sessionsCompleted: 0,
       monthlyFreedBytes: {},
       todayReviewed: 0,
@@ -143,6 +148,10 @@ export const useStatsStore = create<StatsState>()(
 
       recordFavorite() {
         set((state) => ({ favoritesCount: state.favoritesCount + 1 }));
+      },
+
+      recordDeleted(count) {
+        set((state) => ({ photosDeleted: state.photosDeleted + count }));
       },
 
       recordSessionCompleted() {
