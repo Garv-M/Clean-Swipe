@@ -5,6 +5,7 @@ import React, {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -92,18 +93,30 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
     [durationMs],
   );
 
-  const scrubGesture = Gesture.Pan()
-    .minDistance(0)
-    .onStart((e) => {
-      isScrubbingRef.current = true;
-      runOnJS(handleScrubAt)(e.x);
-    })
-    .onUpdate((e) => {
-      runOnJS(handleScrubAt)(e.x);
-    })
-    .onEnd(() => {
-      isScrubbingRef.current = false;
-    });
+  const startScrubbing = useCallback(() => {
+    isScrubbingRef.current = true;
+  }, []);
+
+  const stopScrubbing = useCallback(() => {
+    isScrubbingRef.current = false;
+  }, []);
+
+  const scrubGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .minDistance(0)
+        .onStart((e) => {
+          runOnJS(startScrubbing)();
+          runOnJS(handleScrubAt)(e.x);
+        })
+        .onUpdate((e) => {
+          runOnJS(handleScrubAt)(e.x);
+        })
+        .onEnd(() => {
+          runOnJS(stopScrubbing)();
+        }),
+    [handleScrubAt, startScrubbing, stopScrubbing],
+  );
 
   const progress = durationMs > 0 ? positionMs / durationMs : 0;
   const showControls = durationMs > 0;
