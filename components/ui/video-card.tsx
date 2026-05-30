@@ -1,5 +1,7 @@
-import { AVPlaybackStatus, ResizeMode, Video } from 'expo-av';
+import { Text } from '@/components/ui/text';
+import { Colors } from '@/constants/theme';
 import { Image } from 'expo-image';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import React, {
   forwardRef,
   useCallback,
@@ -9,11 +11,9 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
-import { Colors } from '@/constants/theme';
-import { Text } from '@/components/ui/text';
 
 export interface VideoCardHandle {
   stop: () => void;
@@ -28,69 +28,109 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
   { uri, isTopCard },
   ref,
 ) {
-  const videoRef = useRef<Video>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
-  const [positionMs, setPositionMs] = useState(0);
-  const [durationMs, setDurationMs] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
   const progressBarWidthRef = useRef(0);
   const isScrubbingRef = useRef(false);
 
+  const player = useVideoPlayer(uri, (p) => {
+    p.muted = true;
+    p.timeUpdateEventInterval = 0.1;
+  });
+
   const stop = useCallback(() => {
-    videoRef.current?.stopAsync().catch(() => {});
+    player.pause();
+    player.currentTime = 0;
     setIsPlaying(false);
-  }, []);
+    setCurrentTime(0);
+  }, [player]);
 
   useImperativeHandle(ref, () => ({ stop }), [stop]);
 
+  // Auto-play muted when top card; pause otherwise
   useEffect(() => {
     if (isTopCard) {
-      videoRef.current?.playAsync().catch(() => {});
+      player.play();
     } else {
-      videoRef.current?.pauseAsync().catch(() => {});
+      player.pause();
     }
-  }, [isTopCard]);
+  }, [isTopCard, player]);
 
+  // Event listeners
   useEffect(() => {
-    return () => {
-      videoRef.current?.stopAsync().catch(() => {});
-    };
-  }, []);
+    const playingSub = player.addListener('playingChange', ({ isPlaying: playing }) => {
+      setIsPlaying(playing);
+    });
 
-  const handleStatus = useCallback((status: AVPlaybackStatus) => {
-    if (!status.isLoaded) return;
-    if (!isScrubbingRef.current) {
-      setPositionMs(status.positionMillis);
-    }
-    setDurationMs(status.durationMillis ?? 0);
-    setIsPlaying(status.isPlaying);
-    if (status.didJustFinish) {
+    const timeUpdateSub = player.addListener('timeUpdate', ({ currentTime: time }) => {
+      if (!isScrubbingRef.current) {
+        setCurrentTime(time);
+      }
+    });
+
+    const playToEndSub = player.addListener('playToEnd', () => {
       setIsPlaying(false);
-      videoRef.current?.setPositionAsync(0).catch(() => {});
-    }
-  }, []);
+      player.currentTime = 0;
+      setCurrentTime(0);
+    });
+
+    const statusSub = player.addListener('statusChange', ({ status }) => {
+      if (status === 'readyToPlay') {
+        setDuration(player.duration);
+      }
+    });
+
+    return () => {
+      playingSub.remove();
+      timeUpdateSub.remove();
+      playToEndSub.remove();
+      statusSub.remove();
+    };
+  }, [player]);
 
   const togglePlayPause = useCallback(() => {
     if (isPlaying) {
-      videoRef.current?.pauseAsync().catch(() => {});
+      player.pause();
     } else {
-      videoRef.current?.playAsync().catch(() => {});
+      player.play();
     }
-  }, [isPlaying]);
+  }, [isPlaying, player]);
 
   const toggleMute = useCallback(() => {
-    setIsMuted((prev) => !prev);
-  }, []);
+    const next = !isMuted;
+    setIsMuted(next);
+    player.muted = next;
+  }, [isMuted, player]);
 
+  // RNGH Tap gestures — work reliably inside parent GestureDetector
+  const playPauseTapGesture = useMemo(
+    () =>
+      Gesture.Tap().onEnd(() => {
+        runOnJS(togglePlayPause)();
+      }),
+    [togglePlayPause],
+  );
+
+  const muteTapGesture = useMemo(
+    () =>
+      Gesture.Tap().onEnd(() => {
+        runOnJS(toggleMute)();
+      }),
+    [toggleMute],
+  );
+
+  // Scrub gesture
   const handleScrubAt = useCallback(
     (x: number) => {
-      if (progressBarWidthRef.current <= 0 || durationMs <= 0) return;
+      if (progressBarWidthRef.current <= 0 || duration <= 0) return;
       const ratio = Math.max(0, Math.min(1, x / progressBarWidthRef.current));
-      const newMs = ratio * durationMs;
-      setPositionMs(newMs);
-      videoRef.current?.setPositionAsync(newMs).catch(() => {});
+      const newTime = ratio * duration;
+      setCurrentTime(newTime);
+      player.currentTime = newTime;
     },
-    [durationMs],
+    [duration, player],
   );
 
   const startScrubbing = useCallback(() => {
@@ -118,47 +158,44 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
     [handleScrubAt, startScrubbing, stopScrubbing],
   );
 
-  const progress = durationMs > 0 ? positionMs / durationMs : 0;
-  const showControls = durationMs > 0;
+  const progress = duration > 0 ? currentTime / duration : 0;
+  const showControls = duration > 0;
 
   return (
     <View style={styles.container}>
+      {/* Thumbnail — visible while paused */}
       <Image
         source={uri}
         style={[StyleSheet.absoluteFill, { opacity: isPlaying ? 0 : 1 }]}
         contentFit="contain"
       />
 
-      <View style={StyleSheet.absoluteFill} pointerEvents="none">
-        <Video
-          ref={videoRef}
-          source={{ uri }}
-          style={StyleSheet.absoluteFill}
-          resizeMode={ResizeMode.CONTAIN}
-          onPlaybackStatusUpdate={handleStatus}
-          isMuted={isMuted}
-        />
-      </View>
+      {/* Video player — no native controls, touches pass through */}
+      <VideoView
+        player={player}
+        style={StyleSheet.absoluteFill}
+        nativeControls={false}
+        contentFit="contain"
+        pointerEvents="none"
+      />
 
-      <Pressable
-        onPress={togglePlayPause}
-        style={styles.playPauseButton}
-        hitSlop={{ top: 24, bottom: 24, left: 24, right: 24 }}
-      >
-        <View style={styles.playPauseCircle}>
-          <Text style={styles.playPauseIcon}>{isPlaying ? '⏸' : '▶'}</Text>
+      {/* Centered play / pause button */}
+      <GestureDetector gesture={playPauseTapGesture}>
+        <View style={styles.playPauseButton}>
+          <View style={styles.playPauseCircle}>
+            <Text style={styles.playPauseIcon}>{isPlaying ? '⏸' : '▶'}</Text>
+          </View>
         </View>
-      </Pressable>
+      </GestureDetector>
 
+      {/* Bottom controls — mute + scrub bar */}
       {showControls && (
         <View style={styles.bottomControls}>
-          <Pressable
-            onPress={toggleMute}
-            style={styles.muteButton}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          >
-            <Text style={styles.muteIcon}>{isMuted ? '🔇' : '🔊'}</Text>
-          </Pressable>
+          <GestureDetector gesture={muteTapGesture}>
+            <View style={styles.muteButton}>
+              <Text style={styles.muteIcon}>{isMuted ? '🔇' : '🔊'}</Text>
+            </View>
+          </GestureDetector>
 
           <GestureDetector gesture={scrubGesture}>
             <View
