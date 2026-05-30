@@ -19,8 +19,19 @@ interface SettingsState {
    */
   theme: 'dark';
 
+  /** Unix ms timestamp of when onboarding was first completed. null if not yet onboarded. */
+  memberSince: number | null;
+
+  /** Last time we sent the "pending cleanup" push notification (Unix ms). null = never. */
+  lastPendingCleanupNotifiedAt: number | null;
+
+  /** Month key ("YYYY-MM") of the last monthly digest notification sent. null = never. */
+  lastMonthlyDigestMonth: string | null;
+
   setRetentionDays(days: 7 | 14 | 30): void;
   completeOnboarding(): void;
+  setLastPendingCleanupNotifiedAt(ts: number): void;
+  setLastMonthlyDigestMonth(month: string): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -33,14 +44,23 @@ export const useSettingsStore = create<SettingsState>()(
       retentionDays: 30,
       onboarded: false,
       theme: 'dark',
+      memberSince: null,
+      lastPendingCleanupNotifiedAt: null,
+      lastMonthlyDigestMonth: null,
 
       setRetentionDays(days) {
         set({ retentionDays: days });
       },
 
       completeOnboarding() {
-        set({ onboarded: true });
+        set((state) => ({
+          onboarded: true,
+          memberSince: state.memberSince ?? Date.now(), // only set once
+        }));
       },
+
+      setLastPendingCleanupNotifiedAt(ts) { set({ lastPendingCleanupNotifiedAt: ts }); },
+      setLastMonthlyDigestMonth(month) { set({ lastMonthlyDigestMonth: month }); },
     }),
     createPersistOptions<SettingsState>('settings'),
   ),

@@ -12,6 +12,10 @@
  *  - Create Custom Session ghost button
  *
  * Redirects to /onboarding if the user has not completed onboarding.
+ *
+ * Deep-link behaviour:
+ *  - When navigated to with a `highlight=<clusterId>` URL param the screen
+ *    scrolls to the matching cluster card and plays a brief border-glow pulse.
  */
 
 import { Button } from '@/components/ui/button';
@@ -26,10 +30,11 @@ import { useSettingsStore } from '@/store/settings';
 import { useStatsStore } from '@/store/stats';
 import type { EventCluster } from '@/types';
 import { formatBytes } from '@/utils/format';
-import { Redirect, useRouter } from 'expo-router';
-import { useCallback, useMemo } from 'react';
+import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   Alert,
+  Animated,
   ScrollView,
   StyleSheet,
   Text as RNText,
@@ -49,6 +54,9 @@ export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
+  // ── URL params ────────────────────────────────────────────────────────────
+  const { highlight } = useLocalSearchParams<{ highlight?: string }>();
+
   // ── Store selectors ───────────────────────────────────────────────────────
   const onboarded = useSettingsStore((s) => s.onboarded);
 
@@ -62,6 +70,20 @@ export default function HomeScreen() {
 
   const sessions = useSessionStore((s) => s.sessions);
   const createSession = useSessionStore((s) => s.createSession);
+
+  // ── Refs ──────────────────────────────────────────────────────────────────
+
+  /** ScrollView ref used to programmatically scroll to a highlighted card. */
+  const scrollViewRef = useRef<ScrollView>(null);
+
+  /**
+   * Tracks the Y offset (in scroll-content coordinates) of each cluster card
+   * keyed by cluster.id, populated via onLayout callbacks.
+   */
+  const cardYPositions = useRef<Record<string, number>>({});
+
+  /** Drives the border-glow pulse for the highlighted cluster card. */
+  const highlightAnim = useRef(new Animated.Value(0)).current;
 
   // ── Derived values (all hooks called unconditionally before early return) ──
 
@@ -83,6 +105,41 @@ export default function HomeScreen() {
     () => [styles.content, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 32 }],
     [insets.top, insets.bottom],
   );
+
+  // ── Scroll to highlighted cluster ─────────────────────────────────────────
+
+  useEffect(() => {
+    if (!highlight || clusters.length === 0) return;
+
+    // Allow a short delay so onLayout callbacks have fired before we scroll.
+    const timer = setTimeout(() => {
+      const y = cardYPositions.current[highlight];
+      if (y == null) return;
+      scrollViewRef.current?.scrollTo({ y: Math.max(0, y - 16), animated: true });
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [highlight, clusters]);
+
+  // ── Border-glow pulse for highlighted cluster ─────────────────────────────
+
+  useEffect(() => {
+    if (!highlight) return;
+
+    // Reset so re-navigating to the same highlight replays the animation.
+    highlightAnim.setValue(0);
+
+    const anim = Animated.sequence([
+      Animated.timing(highlightAnim, { toValue: 1, duration: 300, useNativeDriver: false }),
+      Animated.delay(600),
+      Animated.timing(highlightAnim, { toValue: 0, duration: 600, useNativeDriver: false }),
+    ]);
+    anim.start();
+    return () => {
+      anim.stop();
+      highlightAnim.setValue(0);
+    };
+  }, [highlight, highlightAnim]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
@@ -136,6 +193,7 @@ export default function HomeScreen() {
 
   return (
     <ScrollView
+      ref={scrollViewRef}
       style={styles.scroll}
       contentContainerStyle={contentStyle}
       showsVerticalScrollIndicator={false}
@@ -254,6 +312,7 @@ export default function HomeScreen() {
           const session = sessionForCluster(cluster.id);
           const isCompleted = !!session?.completedAt;
           const isInProgress = !!session && !isCompleted;
+          const isHighlighted = cluster.id === highlight;
 
           const statusLabel = isCompleted
             ? 'Complete'
@@ -268,29 +327,56 @@ export default function HomeScreen() {
             : Colors.textSecondary;
 
           return (
-            <Card key={cluster.id} style={styles.sessionCard}>
-              <View style={styles.sessionRow}>
-                <View style={styles.sessionInfo}>
-                  <Text variant="body">{cluster.name}</Text>
-                  <Text variant="label">
-                    {cluster.assetCount} photos ·{' '}
-                    {formatBytes(cluster.estimatedBytes)}
-                  </Text>
-                  <Text
-                    variant="caption"
-                    style={{ color: statusColor }}
-                  >
-                    {statusLabel}
-                  </Text>
+            /**
+             * Animated.View wrapper serves two purposes:
+             *  1. onLayout records the card's Y offset inside the scroll
+             *     content view so we can scrollTo it.
+             *  2. When isHighlighted, it carries the animated border-glow.
+             *
+             * borderRadius matches Card (16) so the glow ring follows the
+             * card's rounded corners. useNativeDriver: false is required
+             * because borderColor is not handled by the native driver.
+             */
+            <Animated.View
+              key={cluster.id}
+              style={[
+                styles.highlightWrapper,
+                isHighlighted && {
+                  borderWidth: 2,
+                  borderColor: highlightAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ['transparent', Colors.primary],
+                  }),
+                },
+              ]}
+              onLayout={(e) => {
+                cardYPositions.current[cluster.id] = e.nativeEvent.layout.y;
+              }}
+            >
+              <Card style={styles.sessionCard}>
+                <View style={styles.sessionRow}>
+                  <View style={styles.sessionInfo}>
+                    <Text variant="body">{cluster.name}</Text>
+                    <Text variant="label">
+                      {cluster.assetCount} photos ·{' '}
+                      {formatBytes(cluster.estimatedBytes)}
+                    </Text>
+                    <Text
+                      variant="caption"
+                      style={{ color: statusColor }}
+                    >
+                      {statusLabel}
+                    </Text>
+                  </View>
+                  <Button
+                    variant={isCompleted ? 'ghost' : 'primary'}
+                    label={isCompleted ? 'Done' : isInProgress ? 'Continue' : 'Go'}
+                    disabled={isCompleted}
+                    onPress={() => handleGoCluster(cluster)}
+                  />
                 </View>
-                <Button
-                  variant={isCompleted ? 'ghost' : 'primary'}
-                  label={isCompleted ? 'Done' : isInProgress ? 'Continue' : 'Go'}
-                  disabled={isCompleted}
-                  onPress={() => handleGoCluster(cluster)}
-                />
-              </View>
-            </Card>
+              </Card>
+            </Animated.View>
           );
         })
       )}
@@ -446,6 +532,13 @@ const styles = StyleSheet.create({
   emptyText: {
     color: Colors.textSecondary,
     textAlign: 'center',
+  },
+  /**
+   * Wrapper for each cluster card. Carries the animated border-glow when the
+   * card is the deep-link highlight target. borderRadius matches Card (16).
+   */
+  highlightWrapper: {
+    borderRadius: 16,
   },
   sessionCard: {
     marginBottom: 0,

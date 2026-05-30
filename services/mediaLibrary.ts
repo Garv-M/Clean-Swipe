@@ -220,11 +220,17 @@ export interface FetchPageResult {
  * @param options.after        endCursor returned by the previous fetchAssetsPage call
  * @param options.first        number of assets to fetch per page (default 50)
  * @param options.mediaType    filter by media type (default 'all' → photo + video)
+ * @param options.createdAfter Unix ms timestamp lower bound (inclusive). When
+ *   provided the function automatically scans pages newest-first and returns
+ *   ALL assets with createdAt >= createdAfter in a single result, setting
+ *   hasNextPage to false and endCursor to undefined. Pagination via `after` is
+ *   ignored when this option is set.
  */
 export async function fetchAssetsPage(options?: {
   after?: string;
   first?: number;
   mediaType?: 'photo' | 'video' | 'all';
+  createdAfter?: number;
 }): Promise<FetchPageResult> {
   const first = options?.first ?? 50;
   const mediaType = resolveMediaType(options?.mediaType ?? 'all');
@@ -234,6 +240,57 @@ export async function fetchAssetsPage(options?: {
   // 'creationTime' to string or the pair to (string | boolean)[].
   const sortBy: [MediaLibrary.SortByKey, boolean][] = [['creationTime', false]];
 
+  // ---------------------------------------------------------------------------
+  // createdAfter mode: scan pages newest-first until a page is entirely older
+  // than the cutoff, then return all matching assets in one result.
+  // ---------------------------------------------------------------------------
+  if (options?.createdAfter !== undefined) {
+    const cutoff = options.createdAfter;
+    const collectedAssets: Asset[] = [];
+    let cursor: string | undefined;
+
+    while (true) {
+      const result = await MediaLibrary.getAssetsAsync({
+        first,
+        after: cursor,
+        mediaType,
+        sortBy,
+      });
+
+      const page = result.assets.map((a) => mapPageAsset(a as RuntimeAsset));
+
+      // Filter to assets at or after the cutoff and accumulate them.
+      for (const asset of page) {
+        if (asset.createdAt >= cutoff) {
+          collectedAssets.push(asset);
+        }
+      }
+
+      // Since assets are sorted newest-first, once every asset on a page is
+      // older than the cutoff we know all subsequent pages will also be older —
+      // stop scanning.
+      const allOlderThanCutoff =
+        page.length > 0 && page.every((a) => a.createdAt < cutoff);
+
+      if (allOlderThanCutoff || !result.hasNextPage || page.length === 0) {
+        break;
+      }
+
+      cursor = result.endCursor || undefined;
+      // Guard: if there is no cursor we cannot advance further.
+      if (!cursor) break;
+    }
+
+    return {
+      assets: collectedAssets,
+      hasNextPage: false,
+      endCursor: undefined,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Normal single-page fetch (existing behaviour, unchanged).
+  // ---------------------------------------------------------------------------
   const result = await MediaLibrary.getAssetsAsync({
     first,
     after: options?.after,
@@ -241,7 +298,7 @@ export async function fetchAssetsPage(options?: {
     sortBy,
   });
 
-  let assets = result.assets.map((a) => mapPageAsset(a as RuntimeAsset));
+  const assets = result.assets.map((a) => mapPageAsset(a as RuntimeAsset));
 
   return {
     assets,
