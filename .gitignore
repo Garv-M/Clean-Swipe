@@ -49,3 +49,5 @@ app-example
 /__tests__
 /.vscode
 /.github
+/.agents
+skills-lock.json
