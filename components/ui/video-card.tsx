@@ -32,8 +32,11 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
   const [isMuted, setIsMuted] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [showCenterButton, setShowCenterButton] = useState(true);
+  const [showBottomControls, setShowBottomControls] = useState(false);
   const progressBarWidthRef = useRef(0);
   const isScrubbingRef = useRef(false);
+  const hideControlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const player = useVideoPlayer(uri, (p) => {
     p.muted = true;
@@ -90,13 +93,43 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
     };
   }, [player]);
 
+  // Hide center button when playing starts
+  useEffect(() => {
+    if (isPlaying) {
+      setShowCenterButton(false);
+      setShowBottomControls(false);
+    } else {
+      setShowCenterButton(true);
+      setShowBottomControls(true);
+    }
+  }, [isPlaying]);
+
+  const scheduleHideControls = useCallback(() => {
+    if (hideControlsTimerRef.current) {
+      clearTimeout(hideControlsTimerRef.current);
+    }
+    hideControlsTimerRef.current = setTimeout(() => {
+      if (!isScrubbingRef.current) {
+        setShowBottomControls(false);
+      }
+    }, 3000);
+  }, []);
+
+  const showControlsTemporarily = useCallback(() => {
+    setShowBottomControls(true);
+    scheduleHideControls();
+  }, [scheduleHideControls]);
+
   const togglePlayPause = useCallback(() => {
     if (isPlaying) {
       player.pause();
+      setShowCenterButton(true);
+      setShowBottomControls(true);
     } else {
       player.play();
+      showControlsTemporarily();
     }
-  }, [isPlaying, player]);
+  }, [isPlaying, player, showControlsTemporarily]);
 
   const toggleMute = useCallback(() => {
     const next = !isMuted;
@@ -180,23 +213,26 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
       />
 
       {/* Centered play / pause button */}
-      <GestureDetector gesture={playPauseTapGesture}>
-        <View style={styles.playPauseButton}>
-          <View style={styles.playPauseCircle}>
-            <Text style={styles.playPauseIcon}>{isPlaying ? '⏸' : '▶'}</Text>
-          </View>
-        </View>
-      </GestureDetector>
-
-      {/* Bottom controls — mute + scrub bar */}
-      {showControls && (
-        <View style={styles.bottomControls}>
-          <GestureDetector gesture={muteTapGesture}>
-            <View style={styles.muteButton}>
-              <Text style={styles.muteIcon}>{isMuted ? '🔇' : '🔊'}</Text>
+      {showCenterButton && (
+        <GestureDetector gesture={playPauseTapGesture}>
+          <View style={styles.playPauseButton}>
+            <View style={styles.playPauseCircle}>
+              <Text style={styles.playPauseIcon}>{isPlaying ? '⏸' : '▶'}</Text>
             </View>
-          </GestureDetector>
+          </View>
+        </GestureDetector>
+      )}
 
+      {/* Invisible tap layer when center button is hidden */}
+      {!showCenterButton && (
+        <GestureDetector gesture={playPauseTapGesture}>
+          <View style={StyleSheet.absoluteFill} />
+        </GestureDetector>
+      )}
+
+      {/* Bottom controls — scrub bar + mute */}
+      {showBottomControls && (
+        <View style={styles.bottomControls}>
           <GestureDetector gesture={scrubGesture}>
             <View
               style={styles.progressTouchArea}
@@ -212,6 +248,12 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
               <View
                 style={[styles.scrubThumb, { left: `${progress * 100}%` as any }]}
               />
+            </View>
+          </GestureDetector>
+
+          <GestureDetector gesture={muteTapGesture}>
+            <View style={styles.muteButton}>
+              <Text style={styles.muteIcon}>{isMuted ? '🔇' : '🔊'}</Text>
             </View>
           </GestureDetector>
         </View>

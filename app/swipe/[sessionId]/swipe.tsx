@@ -10,6 +10,7 @@
 import { Button } from '@/components/ui/button';
 import { ProgressBar } from '@/components/ui/progress-bar';
 import { Text } from '@/components/ui/text';
+import VideoCard, { type VideoCardHandle } from '@/components/ui/video-card';
 import { Colors } from '@/constants/theme';
 import { getAssetsByIds } from '@/services/mediaLibrary';
 import { useSessionStore } from '@/store/session';
@@ -20,7 +21,6 @@ import type { Asset } from '@/types';
 import { Decision } from '@/types';
 import { formatBytes } from '@/utils/format';
 import { Image } from 'expo-image';
-import VideoCard, { type VideoCardHandle } from '@/components/ui/video-card';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import {
