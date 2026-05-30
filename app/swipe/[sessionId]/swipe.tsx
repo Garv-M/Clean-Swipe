@@ -21,7 +21,7 @@ import { Decision } from '@/types';
 import { formatBytes } from '@/utils/format';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -49,15 +49,16 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const PAGE_SIZE = 200;
 const PREFETCH_THRESHOLD = 40;
-const VELOCITY_THRESHOLD = 800;
+const VELOCITY_THRESHOLD = 500;
 const SUSPICIOUS_VELOCITY = 2000;
 const SUSPICIOUS_TIME_MS = 500;
-const CARD_FLY_DURATION = 280;
+const CARD_FLY_DURATION = 200;
 
 const STACK_SCALES = [1.0, 0.95, 0.9] as const;
 const STACK_OFFSETS = [0, 10, 20] as const;
 
-const SPRING_CONFIG = { damping: 18, stiffness: 180 };
+const SPRING_CONFIG = { damping: 15, stiffness: 200 };
+const SNAP_BACK_CONFIG = { damping: 25, stiffness: 180, mass: 0.9 };
 
 // ---------------------------------------------------------------------------
 // MetadataModal
@@ -138,6 +139,10 @@ function MetaRow({ label, value }: { label: string; value: string }) {
 // SwipeCard — per-card component with its own Reanimated shared values
 // ---------------------------------------------------------------------------
 
+interface SwipeCardHandle {
+  triggerSwipe: (decision: Decision) => void;
+}
+
 interface SwipeCardProps {
   asset: Asset;
   stackIndex: number; // 0 = top, 1 = middle, 2 = bottom
@@ -148,23 +153,18 @@ interface SwipeCardProps {
   entryFrom?: { x: number; y: number };
 }
 
-function SwipeCard({
-  asset,
-  stackIndex,
-  onSwipe,
-  onLongPress,
-  screenW,
-  screenH,
-  entryFrom,
-}: SwipeCardProps) {
-  const SWIPE_X_THRESHOLD = screenW * 0.3;
-  const SWIPE_Y_THRESHOLD = screenH * 0.3;
-  const FLY_X = screenW * 1.6;
+const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(function SwipeCard(
+  { asset, stackIndex, onSwipe, onLongPress, screenW, screenH, entryFrom },
+  ref,
+) {
+  const SWIPE_X_THRESHOLD = screenW * 0.25;
+  const SWIPE_Y_THRESHOLD = screenH * 0.25;
+  const FLY_X = screenW * 2.6;
   const FLY_Y = screenH * 1.6;
 
   // Stack position animation (smooth transition when card moves up in stack)
   const cardScale = useSharedValue(STACK_SCALES[stackIndex] ?? 0.9);
-  const cardOffsetY = useSharedValue(STACK_OFFSETS[stackIndex] ?? 20);
+  const cardOffsetY = useSharedValue(STACK_OFFSETS[stackIndex] ?? 10);
 
   useEffect(() => {
     const targetScale = STACK_SCALES[stackIndex] ?? 0.9;
@@ -178,16 +178,45 @@ function SwipeCard({
   const panY = useSharedValue(entryFrom?.y ?? 0);
   const isAnimating = useSharedValue(!!entryFrom);
 
-  // Undo entry animation: spring back from the fly-off position
+  // Undo entry animation: smooth glide back from the fly-off position
   useEffect(() => {
     if (entryFrom) {
-      panX.value = withSpring(0, { damping: 15, stiffness: 150 }, () => {
+      panX.value = withTiming(0, { duration: 300 }, () => {
         isAnimating.value = false;
       });
-      panY.value = withSpring(0, { damping: 15, stiffness: 150 });
+      panY.value = withTiming(0, { duration: 300 });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Imperative handle for programmatic swipe from buttons
+  useImperativeHandle(ref, () => ({
+    triggerSwipe(decision: Decision) {
+      if (isAnimating.value) return;
+      isAnimating.value = true;
+
+      let targetX = 0;
+      let targetY = 0;
+      switch (decision) {
+        case Decision.DELETE_STAGED: targetX = -FLY_X; break;
+        case Decision.KEEP:         targetX = FLY_X;  break;
+        case Decision.FAVORITE:     targetY = -FLY_Y; break;
+        case Decision.SKIP_LATER:   targetY = FLY_Y;  break;
+      }
+
+      if (targetX !== 0) {
+        panX.value = withTiming(targetX, { duration: CARD_FLY_DURATION }, (finished) => {
+          if (finished) runOnJS(onSwipe)(decision, 0);
+        });
+        panY.value = withTiming(0, { duration: CARD_FLY_DURATION });
+      } else {
+        panY.value = withTiming(targetY, { duration: CARD_FLY_DURATION }, (finished) => {
+          if (finished) runOnJS(onSwipe)(decision, 0);
+        });
+        panX.value = withTiming(0, { duration: CARD_FLY_DURATION });
+      }
+    },
+  }));
 
   // Zoom
   const zoomScale = useSharedValue(1);
@@ -270,8 +299,8 @@ function SwipeCard({
           });
         }
       } else {
-        panX.value = withSpring(0, { damping: 20, stiffness: 200 });
-        panY.value = withSpring(0, { damping: 20, stiffness: 200 });
+        panX.value = withSpring(0, SNAP_BACK_CONFIG);
+        panY.value = withSpring(0, SNAP_BACK_CONFIG);
       }
     });
 
@@ -288,11 +317,7 @@ function SwipeCard({
       runOnJS(onLongPress)();
     });
 
-  const composedGesture = Gesture.Exclusive(
-    doubleTapGesture,
-    longPressGesture,
-    panGesture,
-  );
+  const composedGesture = Gesture.Race(panGesture, Gesture.Exclusive(doubleTapGesture, longPressGesture));
 
   // Animated style — no branching on shared values.
   // panX/panY/zoomScale are always 0/0/1 for non-top cards (never modified),
@@ -392,7 +417,7 @@ function SwipeCard({
       </Animated.View>
     </GestureDetector>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // VideoBadge
@@ -450,6 +475,7 @@ export default function SwipeScreen() {
   const lastSwipeTimeRef = useRef(0);
   const hasMarkedStartedRef = useRef(false);
   const hasCompletedRef = useRef(false);
+  const topCardRef = useRef<SwipeCardHandle>(null);
 
   // ── Progress ─────────────────────────────────────────────────────────────
   const cursor = session?.cursor ?? 0;
@@ -786,6 +812,7 @@ export default function SwipeScreen() {
             return (
               <SwipeCard
                 key={asset.id}
+                ref={stackIndex === 0 ? topCardRef : undefined}
                 asset={asset}
                 stackIndex={stackIndex}
                 onSwipe={handleDecision}
@@ -796,6 +823,33 @@ export default function SwipeScreen() {
               />
             );
           })}
+      </View>
+
+      {/* ── Action buttons ── */}
+      <View style={styles.actionRow}>
+        <TouchableOpacity
+          style={[styles.actionButton, styles.actionDelete]}
+          onPress={() => topCardRef.current?.triggerSwipe(Decision.DELETE_STAGED)}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.actionIcon}>✕</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.actionButton, styles.actionFav]}
+          onPress={() => topCardRef.current?.triggerSwipe(Decision.FAVORITE)}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.actionIcon}>♥</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.actionButton, styles.actionKeep]}
+          onPress={() => topCardRef.current?.triggerSwipe(Decision.KEEP)}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.actionIcon}>✓</Text>
+        </TouchableOpacity>
       </View>
 
       {/* ── Bottom bar ── */}
@@ -882,7 +936,7 @@ const styles = StyleSheet.create({
   card: {
     position: 'absolute',
     width: '100%',
-    height: '100%',
+    aspectRatio: 3 / 4,
     borderRadius: 20,
     overflow: 'hidden',
     backgroundColor: '#000000',
@@ -960,6 +1014,37 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 8,
     alignItems: 'center',
+  },
+
+  // ── Action buttons ─────────────────────────────────────────────────────────
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 24,
+    paddingVertical: 12,
+  },
+  actionButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionDelete: {
+    borderColor: Colors.destructive,
+  },
+  actionFav: {
+    borderColor: Colors.info,
+  },
+  actionKeep: {
+    borderColor: Colors.success,
+  },
+  actionIcon: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: Colors.textPrimary,
   },
 
   // ── Metadata modal ─────────────────────────────────────────────────────────
