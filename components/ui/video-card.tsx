@@ -38,7 +38,8 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
   const isScrubbingRef = useRef(false);
   const hideControlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const player = useVideoPlayer(uri, (p) => {
+  const videoSource = useMemo(() => ({ uri }), [uri]);
+  const player = useVideoPlayer(videoSource, (p) => {
     p.muted = true;
     p.timeUpdateEventInterval = 0.1;
   });
