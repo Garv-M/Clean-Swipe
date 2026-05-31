@@ -38,11 +38,15 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
   const isScrubbingRef = useRef(false);
   const hideControlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const videoSource = useMemo(() => ({ uri }), [uri]);
+  // Only load video for the top card — avoids exhausting iOS player resources
+  const videoSource = useMemo(() => (isTopCard ? { uri } : null), [uri, isTopCard]);
   const player = useVideoPlayer(videoSource, (p) => {
     p.muted = true;
     p.timeUpdateEventInterval = 0.1;
   });
+
+  const isTopCardRef = useRef(isTopCard);
+  isTopCardRef.current = isTopCard;
 
   const stop = useCallback(() => {
     player.pause();
@@ -52,15 +56,6 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
   }, [player]);
 
   useImperativeHandle(ref, () => ({ stop }), [stop]);
-
-  // Auto-play muted when top card; pause otherwise
-  useEffect(() => {
-    if (isTopCard) {
-      player.play();
-    } else {
-      player.pause();
-    }
-  }, [isTopCard, player]);
 
   // Event listeners
   useEffect(() => {
@@ -80,9 +75,13 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
       setCurrentTime(0);
     });
 
+    // Auto-play once the player is ready (avoids calling play() before loaded)
     const statusSub = player.addListener('statusChange', ({ status }) => {
       if (status === 'readyToPlay') {
         setDuration(player.duration);
+        if (isTopCardRef.current) {
+          player.play();
+        }
       }
     });
 
@@ -204,14 +203,16 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
         contentFit="contain"
       />
 
-      {/* Video player — no native controls, touches pass through */}
-      <VideoView
-        player={player}
-        style={StyleSheet.absoluteFill}
-        nativeControls={false}
-        contentFit="contain"
-        pointerEvents="none"
-      />
+      {/* Video player — only rendered for top card */}
+      {isTopCard && (
+        <VideoView
+          player={player}
+          style={StyleSheet.absoluteFill}
+          nativeControls={false}
+          contentFit="contain"
+          pointerEvents="none"
+        />
+      )}
 
       {/* Centered play / pause button */}
       {showCenterButton && (
