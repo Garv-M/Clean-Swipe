@@ -68,7 +68,9 @@ function CardSlide({ card, index, translateX }: CardSlideProps) {
 
   return (
     <Animated.View style={[styles.card, animatedStyle]}>
-      <Text style={styles.cardIcon}>{card.icon}</Text>
+      <View style={styles.iconContainer}>
+        <Text style={styles.iconEmoji}>{card.icon}</Text>
+      </View>
       <Text variant="title" style={styles.cardHeadline}>
         {card.headline}
       </Text>
@@ -181,7 +183,7 @@ function PermissionsStep({ onGranted }: { onGranted: () => void }) {
         { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 32 },
       ]}>
       <View style={styles.permContent}>
-        <Text style={styles.cardIcon}>📷</Text>
+        <Text style={styles.iconEmoji}>📷</Text>
         <Text variant="title" style={styles.permHeadline}>
           {state === 'denied' ? 'Full access needed' : 'We need your photos to get started'}
         </Text>
@@ -190,6 +192,10 @@ function PermissionsStep({ onGranted }: { onGranted: () => void }) {
             ? 'Full access is needed to show your photos for review. Tap below to open Settings.'
             : 'We need access to show your photos for review. We never upload anything.'}
         </Text>
+        <View style={styles.privacyBadge}>
+          <Text style={styles.privacyIcon}>🔒</Text>
+          <Text variant="caption" style={styles.privacyText}>100% offline · Privacy first</Text>
+        </View>
       </View>
       <View style={styles.permActions}>
         {state === 'denied' ? (
@@ -360,19 +366,19 @@ function ScanStep({ onComplete }: { onComplete: () => void }) {
         )}
 
         <View style={styles.scanTiles}>
-          <View style={styles.scanTile}>
+          <View style={[styles.scanTile, { borderColor: 'rgba(34,197,94,0.12)' }]}>
             <Text style={[styles.scanTileNum, { color: Colors.success }]}>{tripsFound}</Text>
             <Text variant="caption" style={styles.scanTileLabel}>
               trips found
             </Text>
           </View>
-          <View style={styles.scanTile}>
+          <View style={[styles.scanTile, { borderColor: 'rgba(59,130,246,0.12)' }]}>
             <Text style={[styles.scanTileNum, { color: Colors.info }]}>{screenshotsFound}</Text>
             <Text variant="caption" style={styles.scanTileLabel}>
               screenshots
             </Text>
           </View>
-          <View style={styles.scanTile}>
+          <View style={[styles.scanTile, { borderColor: 'rgba(249,115,22,0.12)' }]}>
             <Text style={[styles.scanTileNum, { color: Colors.primary }]}>{totalVideoScanned}</Text>
             <Text variant="caption" style={styles.scanTileLabel}>
               Videos
@@ -388,7 +394,7 @@ function ScanStep({ onComplete }: { onComplete: () => void }) {
       </View>
 
       {scanDone && (
-        <Button label="Let's Go" onPress={onComplete} style={styles.scanCta} />
+        <Button label="Let's Go" onPress={onComplete} style={[styles.scanCta, { opacity: 1 }]} />
       )}
     </View>
   );
@@ -441,9 +447,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 40,
   },
-  cardIcon: {
-    fontSize: 64,
+  iconContainer: {
+    width: 72,
+    height: 72,
+    backgroundColor: 'rgba(249,115,22,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(249,115,22,0.12)',
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: 24,
+  },
+  iconEmoji: {
+    fontSize: 32,
   },
   cardHeadline: {
     textAlign: 'center',
@@ -466,8 +482,8 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   dot: {
-    height: 6,
-    borderRadius: 3,
+    height: 4,
+    borderRadius: 2,
   },
   dotActive: {
     width: 20,
@@ -475,7 +491,7 @@ const styles = StyleSheet.create({
   },
   dotInactive: {
     width: 6,
-    backgroundColor: 'rgba(255,255,255,0.25)',
+    backgroundColor: 'rgba(255,255,255,0.15)',
   },
   fullWidthBtn: {
     width: '100%',
@@ -498,6 +514,24 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     lineHeight: 22,
   },
+  privacyBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(34,197,94,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(34,197,94,0.12)',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    marginTop: 20,
+  },
+  privacyIcon: {
+    fontSize: 14,
+  },
+  privacyText: {
+    color: Colors.textSecondary,
+  },
   permActions: {
     paddingHorizontal: 24,
   },
@@ -508,7 +542,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   scanBigNumber: {
-    fontSize: 56,
+    fontSize: 52,
     fontWeight: '800',
     color: Colors.textPrimary,
     fontVariant: ['tabular-nums'],
@@ -531,9 +565,9 @@ const styles = StyleSheet.create({
   },
   scanTile: {
     flex: 1,
-    backgroundColor: Colors.cardFrom,
-    borderRadius: 12,
-    padding: 12,
+    backgroundColor: Colors.cardBg,
+    borderRadius: 14,
+    padding: 14,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: Colors.border,

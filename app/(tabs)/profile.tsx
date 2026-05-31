@@ -29,7 +29,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Card } from '@/components/ui/card';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Text } from '@/components/ui/text';
-import { Colors } from '@/constants/theme';
+import { Colors, Spacing } from '@/constants/theme';
 import { runBackgroundChecks } from '@/services/backgroundTask';
 import {
   scheduleMonthlyDigestNotification,
@@ -48,7 +48,7 @@ import { formatBytes } from '@/utils/format';
 // ---------------------------------------------------------------------------
 
 const CONTENT_PADDING = 16;
-const PRIMARY_BORDER = 'rgba(249,115,22,0.35)' as const;
+const PRIMARY_BORDER = 'rgba(249,115,22,0.12)' as const;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -181,8 +181,7 @@ export default function ProfileScreen() {
 
       {/* 3 stat boxes */}
       <View style={styles.statsRow}>
-        {/* Photos reviewed — blue */}
-        <Card style={styles.statCard}>
+        <Card style={[styles.statCard, { borderWidth: 1, borderColor: 'rgba(59,130,246,0.12)' }]}>
           <RNText style={[styles.statNumber, { color: Colors.info }]}>
             {photosReviewed}
           </RNText>
@@ -191,8 +190,7 @@ export default function ProfileScreen() {
           </Text>
         </Card>
 
-        {/* Photos cleared — red */}
-        <Card style={styles.statCard}>
+        <Card style={[styles.statCard, { borderWidth: 1, borderColor: 'rgba(239,68,68,0.12)' }]}>
           <RNText style={[styles.statNumber, { color: Colors.destructive }]}>
             {photosDeleted}
           </RNText>
@@ -201,8 +199,7 @@ export default function ProfileScreen() {
           </Text>
         </Card>
 
-        {/* Sessions done — green */}
-        <Card style={styles.statCard}>
+        <Card style={[styles.statCard, { borderWidth: 1, borderColor: 'rgba(34,197,94,0.12)' }]}>
           <RNText style={[styles.statNumber, { color: Colors.success }]}>
             {sessionsCompleted}
           </RNText>
@@ -212,53 +209,51 @@ export default function ProfileScreen() {
         </Card>
       </View>
 
-      {/* Bar chart — Freed per month */}
-      <Text variant="label" style={styles.sectionHeader}>
-        FREED PER MONTH
-      </Text>
+      <Card style={styles.chartCard}>
+        <Text variant="label" style={styles.chartLabel}>MONTHLY FREED</Text>
+        <View style={styles.chartContainer}>
+          {hasChartData ? (
+            <Svg width={chartWidth} height={chartHeight}>
+              {chartData.map((item, index) => {
+                const barHeight =
+                  maxBytes > 0
+                    ? Math.max(4, Math.round((item.bytes / maxBytes) * barAreaHeight))
+                    : 4;
+                const x = Math.round(index * slotWidth + (slotWidth - barWidth) / 2);
+                const barY = barAreaHeight - barHeight;
+                const isCurrentMonth = item.key === currentMonthKey;
+                const barFill = isCurrentMonth ? Colors.primary : Colors.cardFrom;
+                const barStroke = isCurrentMonth ? 'transparent' : Colors.border;
 
-      <View style={styles.chartContainer}>
-        {hasChartData ? (
-          <Svg width={chartWidth} height={chartHeight}>
-            {chartData.map((item, index) => {
-              const barHeight =
-                maxBytes > 0
-                  ? Math.max(4, Math.round((item.bytes / maxBytes) * barAreaHeight))
-                  : 4;
-              const x = Math.round(index * slotWidth + (slotWidth - barWidth) / 2);
-              const barY = barAreaHeight - barHeight;
-              const isCurrentMonth = item.key === currentMonthKey;
-              const barFill = isCurrentMonth ? Colors.primary : Colors.cardFrom;
-              const barStroke = isCurrentMonth ? 'transparent' : Colors.border;
-
-              return (
-                <React.Fragment key={item.key}>
-                  <Rect
-                    x={x}
-                    y={barY}
-                    width={barWidth}
-                    height={barHeight}
-                    rx={4}
-                    fill={barFill}
-                    stroke={barStroke}
-                    strokeWidth={1}
-                  />
-                  <SvgText
-                    x={x + barWidth / 2}
-                    y={barAreaHeight + labelHeight}
-                    fontSize={10}
-                    fill={Colors.textSecondary}
-                    textAnchor="middle">
-                    {item.label}
-                  </SvgText>
-                </React.Fragment>
-              );
-            })}
-          </Svg>
-        ) : (
-          <RNText style={styles.noDataText}>No data yet</RNText>
-        )}
-      </View>
+                return (
+                  <React.Fragment key={item.key}>
+                    <Rect
+                      x={x}
+                      y={barY}
+                      width={barWidth}
+                      height={barHeight}
+                      rx={4}
+                      fill={barFill}
+                      stroke={barStroke}
+                      strokeWidth={1}
+                    />
+                    <SvgText
+                      x={x + barWidth / 2}
+                      y={barAreaHeight + labelHeight}
+                      fontSize={10}
+                      fill={Colors.textSecondary}
+                      textAnchor="middle">
+                      {item.label}
+                    </SvgText>
+                  </React.Fragment>
+                );
+              })}
+            </Svg>
+          ) : (
+            <RNText style={styles.noDataText}>No data yet</RNText>
+          )}
+        </View>
+      </Card>
 
       {/* ═══════════════════════════════════════════════════════════════════
           Section B — Settings
@@ -268,22 +263,17 @@ export default function ProfileScreen() {
         SETTINGS
       </Text>
 
-      <View style={styles.settingsSection}>
+      <Card style={styles.settingsCard}>
         {SETTINGS_ROWS.map((row, index) => (
           <View key={row.label}>
-            <TouchableOpacity
-              style={styles.settingsRow}
-              onPress={handleComingSoon}
-              activeOpacity={0.7}>
+            <TouchableOpacity style={styles.settingsRow} onPress={handleComingSoon} activeOpacity={0.7}>
               <Text variant="body">{row.label}</Text>
               <IconSymbol name="chevron.right" size={16} color={Colors.textSecondary} />
             </TouchableOpacity>
-            {index < SETTINGS_ROWS.length - 1 && (
-              <View style={styles.settingsDivider} />
-            )}
+            {index < SETTINGS_ROWS.length - 1 && <View style={styles.settingsDivider} />}
           </View>
         ))}
-      </View>
+      </Card>
 
       {/* ═══════════════════════════════════════════════════════════════════
           DEV — Notification test panel (only visible in development builds)
@@ -380,7 +370,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
   },
   content: {
-    gap: 12,
+    gap: Spacing.sectionGap,
     paddingHorizontal: CONTENT_PADDING,
   },
   header: {
@@ -406,7 +396,7 @@ const styles = StyleSheet.create({
   // ── Stat row ───────────────────────────────────────────────────────────────
   statsRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: Spacing.itemGap,
   },
   statCard: {
     flex: 1,
@@ -417,8 +407,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   statNumber: {
-    fontSize: 22,
-    fontWeight: '700',
+    fontSize: 20,
+    fontWeight: '800',
   },
 
   // ── Section header ─────────────────────────────────────────────────────────
@@ -428,9 +418,13 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
 
-  // ── Chart ──────────────────────────────────────────────────────────────────
+  chartCard: {
+    gap: 12,
+  },
+  chartLabel: {
+    color: Colors.textSecondary,
+  },
   chartContainer: {
-    marginTop: 4,
   },
   noDataText: {
     color: Colors.textSecondary,
@@ -438,21 +432,20 @@ const styles = StyleSheet.create({
     paddingVertical: 40,
   },
 
-  // ── Settings section ────────────────────────────────────────────────────────
-  settingsSection: {
-    marginTop: 4,
+  settingsCard: {
+    padding: 0,
+    overflow: 'hidden',
   },
   settingsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 14,
-    paddingHorizontal: CONTENT_PADDING,
+    paddingVertical: 15,
+    paddingHorizontal: 22,
   },
   settingsDivider: {
-    height: StyleSheet.hairlineWidth,
+    height: 1,
     backgroundColor: Colors.border,
-    marginHorizontal: CONTENT_PADDING,
   },
 
   // ── DEV debug panel ────────────────────────────────────────────────────────
