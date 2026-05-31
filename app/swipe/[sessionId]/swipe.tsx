@@ -382,7 +382,7 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(function SwipeCard
         {asset.kind === 'video' ? (
           <VideoCard
             ref={videoCardRef}
-            uri={asset.localUri ?? asset.uri}
+            uri={asset.uri}
             isTopCard={stackIndex === 0}
           />
         ) : (

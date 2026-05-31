@@ -38,15 +38,25 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
   const isScrubbingRef = useRef(false);
   const hideControlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Only load video for the top card — avoids exhausting iOS player resources
-  const videoSource = useMemo(() => (isTopCard ? { uri } : null), [uri, isTopCard]);
-  const player = useVideoPlayer(videoSource, (p) => {
+  const player = useVideoPlayer(null, (p) => {
     p.muted = true;
     p.timeUpdateEventInterval = 0.1;
   });
 
   const isTopCardRef = useRef(isTopCard);
   isTopCardRef.current = isTopCard;
+  const hasLoadedRef = useRef(false);
+
+  // Load using replaceAsync — supports iOS PHAsset (ph://) URIs
+  useEffect(() => {
+    if (isTopCard && !hasLoadedRef.current) {
+      hasLoadedRef.current = true;
+      if (__DEV__) console.log('[VideoCard] loading:', uri);
+      player.replaceAsync({ uri }).catch((err) => {
+        if (__DEV__) console.warn('[VideoCard] replaceAsync failed:', err);
+      });
+    }
+  }, [isTopCard, uri, player]);
 
   const stop = useCallback(() => {
     player.pause();
@@ -77,6 +87,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
 
     // Auto-play once the player is ready (avoids calling play() before loaded)
     const statusSub = player.addListener('statusChange', ({ status }) => {
+      if (__DEV__) console.log('[VideoCard] status:', status);
       if (status === 'readyToPlay') {
         setDuration(player.duration);
         if (isTopCardRef.current) {
