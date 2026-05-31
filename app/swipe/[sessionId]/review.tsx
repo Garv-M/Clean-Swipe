@@ -38,12 +38,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 // Constants
 // ---------------------------------------------------------------------------
 
-const NUM_COLUMNS = 3;
-/** Pixel gap between tiles in both axes. */
+const NUM_COLUMNS = 4;
 const TILE_GAP = 2;
-/** Yellow border colour applied to suspicious tiles. */
-const SUSPICIOUS_BORDER_COLOR = Colors.warning;
-const SUSPICIOUS_BORDER_WIDTH = 2;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,7 +73,6 @@ function PhotoTile({ item, isSelected, size, onPress }: PhotoTileProps) {
       style={[
         styles.tile,
         { width: size, height: size },
-        item.isSuspicious && styles.tileSuspicious,
       ]}
     >
       {item.asset?.uri ? (
@@ -126,7 +121,7 @@ export default function ReviewScreen() {
   const { width: screenWidth } = useWindowDimensions();
 
   /**
-   * Tile side length: divide screen width evenly across 3 columns with gaps
+   * Tile side length: divide screen width evenly across 4 columns with gaps
    * between (but not outside) them, then floor to avoid sub-pixel gaps.
    */
   const tileSize = Math.floor(
@@ -365,15 +360,15 @@ export default function ReviewScreen() {
 
       {/* ── Header ── */}
       <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} hitSlop={{top:10,bottom:10,left:10,right:10}}>
+          <Text variant="body" style={styles.backText}>← Back</Text>
+        </TouchableOpacity>
         <View style={styles.headerTopRow}>
           <Text variant="heading">Review Deletions</Text>
-          <View style={styles.countBadge}>
-            <Text style={styles.countBadgeText}>
-              {reviewItems.length}{' '}
-              {reviewItems.length === 1 ? 'photo' : 'photos'}
-            </Text>
-          </View>
         </View>
+        <Text variant="caption" style={styles.headerSubtitle}>
+          {reviewItems.length} photos · ~{formatBytes(totalBytes)} to free
+        </Text>
 
         <View style={styles.headerActions}>
           <TouchableOpacity
@@ -397,6 +392,18 @@ export default function ReviewScreen() {
           </TouchableOpacity>
         </View>
       </View>
+
+      {(() => {
+        const suspiciousCount = reviewItems.filter(i => i.isSuspicious).length;
+        return suspiciousCount > 0 ? (
+          <View style={styles.warningBanner}>
+            <Text style={styles.warningIcon}>⚡</Text>
+            <Text variant="caption" style={styles.warningText}>
+              {suspiciousCount} fast-swiped — tap to double-check
+            </Text>
+          </View>
+        ) : null;
+      })()}
 
       {/* ── Photo grid ── */}
       <FlatList<ReviewItem>
@@ -424,22 +431,18 @@ export default function ReviewScreen() {
 
       {/* ── Sticky bottom bar ── */}
       <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 12 }]}>
-        {totalBytes > 0 && (
-          <Text variant="label" style={styles.spaceText}>
-            Frees {formatBytes(totalBytes)}
-          </Text>
-        )}
         <Button
           variant="destructive"
           label={
             selectedCount === 0
               ? 'No photos selected'
-              : `Delete ${selectedCount} ${selectedCount === 1 ? 'photo' : 'photos'}`
+              : `Confirm Delete · Free ${formatBytes(totalBytes)}`
           }
           onPress={handleDelete}
           disabled={selectedCount === 0}
           style={styles.deleteButton}
         />
+        <Text style={styles.reassuranceText}>Photos go to your bin for {retentionDays} days</Text>
       </View>
 
       {/* ── Celebration overlay (shown for 1 s after deletion) ── */}
@@ -504,20 +507,20 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: Colors.border,
   },
+  backBtn: {
+    alignSelf: 'flex-start',
+    marginBottom: 8,
+  },
+  backText: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 12,
+  },
   headerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
   },
-  countBadge: {
-    backgroundColor: Colors.cardFrom,
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-  },
-  countBadgeText: {
-    fontSize: 12,
-    fontWeight: '500',
+  headerSubtitle: {
     color: Colors.textSecondary,
   },
   headerActions: {
@@ -539,19 +542,31 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
+  warningBanner: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    backgroundColor: 'rgba(234,179,8,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(234,179,8,0.15)',
+    borderRadius: 12,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  warningIcon: {
+    fontSize: 14,
+  },
+  warningText: {
+    color: '#EAB308',
+    flex: 1,
+  },
+
   // ── Photo tile ─────────────────────────────────────────────────────────────
   tile: {
     overflow: 'hidden',
     backgroundColor: Colors.cardFrom,
-  },
-  /**
-   * Suspicious tiles: yellow border.
-   * React Native's default box model is border-box, so the border is drawn
-   * inside the tile's explicit width/height — no grid misalignment.
-   */
-  tileSuspicious: {
-    borderWidth: SUSPICIOUS_BORDER_WIDTH,
-    borderColor: SUSPICIOUS_BORDER_COLOR,
+    borderRadius: 4,
   },
   tilePlaceholder: {
     backgroundColor: Colors.cardFrom,
@@ -567,15 +582,16 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
     fontWeight: '700',
   },
-  /** Small rounded pill that renders the ⚡ glyph in the top-left corner. */
   suspiciousBadge: {
     position: 'absolute',
     top: 4,
     left: 4,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(234,179,8,0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(234,179,8,0.25)',
+    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -594,8 +610,10 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
     alignItems: 'center',
   },
-  spaceText: {
-    color: Colors.success,
+  reassuranceText: {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.3)',
+    textAlign: 'center',
   },
   deleteButton: {
     width: '100%',
