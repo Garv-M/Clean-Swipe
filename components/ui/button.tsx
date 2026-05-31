@@ -1,4 +1,4 @@
-import { Colors, Spacing, Shadows } from '@/constants/theme';
+import { Colors, Shadows, Spacing } from '@/constants/theme';
 import { StyleSheet, Text, TouchableOpacity, type TouchableOpacityProps, type ViewStyle } from 'react-native';
 
 type Variant = 'primary' | 'secondary' | 'destructive' | 'ghost' | 'frosted';

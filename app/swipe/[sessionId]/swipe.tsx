@@ -53,10 +53,10 @@ const PREFETCH_THRESHOLD = 40;
 const VELOCITY_THRESHOLD = 500;
 const SUSPICIOUS_VELOCITY = 2000;
 const SUSPICIOUS_TIME_MS = 500;
-const CARD_FLY_DURATION = 200;
+const CARD_FLY_DURATION = 250;
 
 const STACK_SCALES = [1.0, 0.95, 0.9] as const;
-const STACK_OFFSETS = [0, 10, 20] as const;
+const STACK_OFFSETS = [0, 7, 14] as const;
 
 const SPRING_CONFIG = { damping: 15, stiffness: 200 };
 const SNAP_BACK_CONFIG = { damping: 25, stiffness: 180, mass: 0.9 };
@@ -398,7 +398,7 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(function SwipeCard
           style={[styles.overlay, styles.overlayLeft, leftOverlayStyle]}
           pointerEvents="none"
         >
-          <Text variant="heading" style={[styles.overlayLabel, { color: Colors.destructive }]}>
+          <Text variant="heading" style={[styles.overlayLabel, { color: Colors.destructive, transform: [{ rotate: '-15deg' }] }]}>
             DELETE
           </Text>
         </Animated.View>
@@ -782,10 +782,11 @@ export default function SwipeScreen() {
       <View style={styles.topBar}>
         <View style={styles.progressGroup}>
           <Text variant="label" style={styles.progressText}>
-            {cursor} / {total > 0 ? total : '—'}
+            <Text style={{ opacity: 0.5 }}>{cursor}</Text>
+            <Text style={{ opacity: 0.2 }}> / {total > 0 ? total : '—'}</Text>
           </Text>
           <View style={styles.progressBarWrap}>
-            <ProgressBar progress={total > 0 ? cursor / total : 0} />
+            <ProgressBar progress={total > 0 ? cursor / total : 0} height={3} />
           </View>
         </View>
 
@@ -835,7 +836,7 @@ export default function SwipeScreen() {
           onPress={() => topCardRef.current?.triggerSwipe(Decision.DELETE_STAGED)}
           activeOpacity={0.7}
         >
-          <Text style={styles.actionIcon}>✕</Text>
+          <Text style={styles.actionIconDelete}>✕</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -843,7 +844,7 @@ export default function SwipeScreen() {
           onPress={() => topCardRef.current?.triggerSwipe(Decision.FAVORITE)}
           activeOpacity={0.7}
         >
-          <Text style={styles.actionIcon}>♥</Text>
+          <Text style={styles.actionIconFav}>♥</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -851,17 +852,15 @@ export default function SwipeScreen() {
           onPress={() => topCardRef.current?.triggerSwipe(Decision.KEEP)}
           activeOpacity={0.7}
         >
-          <Text style={styles.actionIcon}>✓</Text>
+          <Text style={styles.actionIconKeep}>✓</Text>
         </TouchableOpacity>
       </View>
 
       {/* ── Bottom bar ── */}
       <View style={styles.bottomBar}>
-        <Button
-          variant="ghost"
-          label="End Session Early"
-          onPress={handleEndEarly}
-        />
+        <TouchableOpacity onPress={handleEndEarly} activeOpacity={0.5}>
+          <Text style={styles.endSessionText}>End Session</Text>
+        </TouchableOpacity>
       </View>
 
       {/* ── Metadata modal ── */}
@@ -915,14 +914,15 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   undoButton: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
   undoLabel: {
     color: Colors.textSecondary,
+    fontSize: 11,
   },
   disabledOpacity: {
     opacity: 0.35,
@@ -938,15 +938,15 @@ const styles = StyleSheet.create({
   },
   card: {
     position: 'absolute',
-    width: '100%',
+    width: '85%',
     aspectRatio: 3 / 4,
-    borderRadius: 20,
+    borderRadius: 22,
     overflow: 'hidden',
     backgroundColor: '#000000',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
     elevation: 6,
   },
   cardImage: {
@@ -965,32 +965,32 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     width: '50%',
-    backgroundColor: 'rgba(239,68,68,0.18)',
+    backgroundColor: 'rgba(239,68,68,0.12)',
   },
   overlayRight: {
     top: 0,
     bottom: 0,
     right: 0,
     width: '50%',
-    backgroundColor: 'rgba(34,197,94,0.18)',
+    backgroundColor: 'rgba(34,197,94,0.12)',
   },
   overlayTop: {
     left: 0,
     right: 0,
     top: 0,
     height: '40%',
-    backgroundColor: 'rgba(59,130,246,0.18)',
+    backgroundColor: 'rgba(59,130,246,0.12)',
   },
   overlayBottom: {
     left: 0,
     right: 0,
     bottom: 0,
     height: '40%',
-    backgroundColor: 'rgba(156,163,175,0.18)',
+    backgroundColor: 'rgba(156,163,175,0.12)',
   },
   overlayLabel: {
     fontWeight: '800',
-    fontSize: 28,
+    fontSize: 16,
     letterSpacing: 2,
     textTransform: 'uppercase',
   },
@@ -1000,6 +1000,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 8,
     alignItems: 'center',
+  },
+  endSessionText: {
+    fontSize: 11,
+    opacity: 0.2,
+    color: Colors.textSecondary,
   },
 
   // ── Action buttons ─────────────────────────────────────────────────────────
@@ -1011,26 +1016,47 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   actionButton: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
   },
   actionDelete: {
-    borderColor: Colors.destructive,
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: 'rgba(239,68,68,0.12)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(239,68,68,0.3)',
   },
   actionFav: {
-    borderColor: Colors.info,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(59,130,246,0.12)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(59,130,246,0.3)',
   },
   actionKeep: {
-    borderColor: Colors.success,
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: 'rgba(34,197,94,0.12)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(34,197,94,0.3)',
   },
-  actionIcon: {
-    fontSize: 24,
+  actionIconDelete: {
+    fontSize: 22,
     fontWeight: '700',
-    color: Colors.textPrimary,
+    color: 'rgba(239,68,68,1)',
+  },
+  actionIconFav: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: 'rgba(59,130,246,1)',
+  },
+  actionIconKeep: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: 'rgba(34,197,94,1)',
   },
 
   // ── Metadata modal ─────────────────────────────────────────────────────────

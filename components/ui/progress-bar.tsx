@@ -1,8 +1,8 @@
 import { Colors } from '@/constants/theme';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
-import { LinearGradient } from 'expo-linear-gradient';
 
 interface ProgressBarProps {
   progress: number;

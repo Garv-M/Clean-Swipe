@@ -23,18 +23,18 @@ import {
   Modal,
   ScrollView,
   StyleSheet,
+  Text as RNText,
   TouchableOpacity,
   View,
   useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Text } from '@/components/ui/text';
-import { Colors } from '@/constants/theme';
+import { Colors, Spacing } from '@/constants/theme';
 import { confirmStaged, executeDelete } from '@/services/deletion';
 import { getAssetsByIds } from '@/services/mediaLibrary';
 import { useSessionStore } from '@/store/session';
@@ -47,12 +47,13 @@ import { formatBytes } from '@/utils/format';
 // ---------------------------------------------------------------------------
 
 const NUM_COLUMNS = 3;
-const TILE_GAP = 2;
+const TILE_GAP = 3;
+const TILE_RADIUS = 6;
 const SUSPICIOUS_COLOR = Colors.warning;
 // Two stacked buttons: 2×48 + gaps + padding. Used as paddingBottom offset for scroll content.
 const BOTTOM_BAR_HEIGHT = 112;
 /** Horizontal padding applied to the scroll content. */
-const CONTENT_PADDING_H = 16;
+const CONTENT_PADDING_H = 20;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -191,6 +192,12 @@ export default function BinScreen() {
   /** Count of staged items that are NOT checked for rescue (will be deleted). */
   const uncheckedCount = staged.length - rescueSelectedIds.size;
 
+  /** Sum of bytes for all staged items (used in the header subtitle). */
+  const totalStagedBytes = useMemo(
+    () => totalBytes(staged.map((s) => s.assetId), assetMap),
+    [staged, assetMap],
+  );
+
   /** Sum of bytes for unchecked staged items only (used in the delete button label). */
   const uncheckedStagedBytes = useMemo(
     () =>
@@ -290,6 +297,11 @@ export default function BinScreen() {
       {/* ── Screen header ─────────────────────────────────────────────── */}
       <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
         <Text variant="title">Bin</Text>
+        {staged.length > 0 && (
+          <Text variant="caption" style={styles.subtitle}>
+            {staged.length} photos pending cleanup · ~{formatBytes(totalStagedBytes)}
+          </Text>
+        )}
       </View>
 
       <ScrollView
@@ -319,11 +331,10 @@ export default function BinScreen() {
               PENDING CLEANUP
             </Text>
 
-            <Card>
-              <Text variant="body" style={styles.bannerText}>
-                Tap to rescue (check = keep). Long press to preview. Delete All removes unchecked photos.
-              </Text>
-            </Card>
+            <View style={styles.infoHint}>
+              <RNText style={styles.infoIcon}>💡</RNText>
+              <Text variant="caption" style={styles.infoText}>Tap to rescue · Long-press to preview</Text>
+            </View>
 
             {stagedGroups.map(({ sessionId, items }) => {
               const session = sessions[sessionId];
@@ -348,7 +359,6 @@ export default function BinScreen() {
                           style={[
                             styles.tile,
                             tileSizeStyle,
-                            item.isSuspicious && styles.suspiciousTile,
                           ]}>
                           {asset?.uri ? (
                             <Image
@@ -395,27 +405,24 @@ export default function BinScreen() {
 
       {/* ── Sticky bottom bar ─────────────────────────────────────────── */}
       {showDeleteAllBar && (
-        <View style={[styles.bottomBar, { bottom: insets.bottom }]}>
-          {rescueSelectedIds.size > 0 && (
-            <Button
-              variant="secondary"
-              label={`Rescue ${rescueSelectedIds.size} selected`}
-              onPress={handleRescueSelected}
-              style={styles.fullWidth}
-            />
-          )}
-          <Button
-            variant={uncheckedCount === 0 ? 'ghost' : 'destructive'}
-            disabled={uncheckedCount === 0}
-            label={
-              uncheckedCount === 0
-                ? 'All rescued \u2713'
-                : `Delete ${uncheckedCount} photo${uncheckedCount !== 1 ? 's' : ''} (free ${formatBytes(uncheckedStagedBytes)})`
-            }
-            onPress={handleDeleteAll}
-            style={styles.fullWidth}
+        <>
+          <LinearGradient
+            colors={['transparent', Colors.background]}
+            style={styles.fadeGradient}
           />
-        </View>
+          <View style={[styles.bottomBar, { bottom: insets.bottom }]}>
+            <View style={styles.bottomBarButtons}>
+              {rescueSelectedIds.size > 0 && (
+                <TouchableOpacity style={styles.rescueButton} onPress={handleRescueSelected}>
+                  <RNText style={styles.rescueButtonText}>Rescue {rescueSelectedIds.size} selected</RNText>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity style={styles.deleteButton} onPress={handleDeleteAll}>
+                <RNText style={styles.deleteButtonText}>Delete {uncheckedCount} · free {formatBytes(uncheckedStagedBytes)}</RNText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </>
       )}
 
       {/* ── Full-screen preview modal ──────────────────────────────────── */}
@@ -469,6 +476,29 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: CONTENT_PADDING_H,
     paddingBottom: 12,
+  },
+  subtitle: {
+    color: Colors.textSecondary,
+    marginTop: 4,
+  },
+
+  // ── Info hint card ─────────────────────────────────────────────────────────
+  infoHint: {
+    backgroundColor: Colors.cardBg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 12,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  infoIcon: {
+    fontSize: 16,
+  },
+  infoText: {
+    color: Colors.textSecondary,
+    flex: 1,
   },
 
   // ── Scroll ─────────────────────────────────────────────────────────────────
@@ -525,12 +555,8 @@ const styles = StyleSheet.create({
   // ── Photo tile ─────────────────────────────────────────────────────────────
   tile: {
     overflow: 'hidden',
-    borderRadius: 4,
+    borderRadius: TILE_RADIUS,
     backgroundColor: Colors.cardFrom,
-  },
-  suspiciousTile: {
-    borderWidth: 2,
-    borderColor: SUSPICIOUS_COLOR,
   },
   tilePlaceholder: {
     backgroundColor: Colors.cardFrom,
@@ -541,9 +567,11 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 4,
     left: 4,
-    backgroundColor: 'rgba(0,0,0,0.62)',
-    borderRadius: 4,
-    paddingHorizontal: 4,
+    backgroundColor: 'rgba(234,179,8,0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(234,179,8,0.25)',
+    borderRadius: 6,
+    paddingHorizontal: 5,
     paddingVertical: 2,
   },
   suspiciousBadgeText: {
@@ -555,13 +583,13 @@ const styles = StyleSheet.create({
   // ── Checkbox indicator (top-right corner of staged tile) ──────────────────
   checkboxOuter: {
     position: 'absolute',
-    top: 5,
-    right: 5,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.8)',
+    top: 6,
+    right: 6,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.4)',
     backgroundColor: 'rgba(0,0,0,0.3)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -580,7 +608,16 @@ const styles = StyleSheet.create({
   // ── Rescued overlay (green tint over checked staged tiles) ─────────────────
   rescuedOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(34,197,94,0.25)',
+    backgroundColor: 'rgba(34,197,94,0.15)',
+  },
+
+  // ── Fade gradient above bottom bar ─────────────────────────────────────────
+  fadeGradient: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: BOTTOM_BAR_HEIGHT,
+    height: 24,
   },
 
   // ── Sticky bottom bar ──────────────────────────────────────────────────────
@@ -594,6 +631,36 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: Colors.border,
     gap: 8,
+  },
+  bottomBarButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  rescueButton: {
+    flex: 1,
+    backgroundColor: 'rgba(34,197,94,0.08)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(34,197,94,0.25)',
+    borderRadius: 14,
+    padding: 14,
+    alignItems: 'center',
+  },
+  rescueButtonText: {
+    color: Colors.success,
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  deleteButton: {
+    flex: 1.2,
+    backgroundColor: Colors.destructive,
+    borderRadius: 14,
+    padding: 14,
+    alignItems: 'center',
+  },
+  deleteButtonText: {
+    color: Colors.textPrimary,
+    fontWeight: '600',
+    fontSize: 14,
   },
 
   // ── Shared ─────────────────────────────────────────────────────────────────
