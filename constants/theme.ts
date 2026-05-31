@@ -2,23 +2,59 @@ import { Platform } from 'react-native';
 
 // ── Design-system palette ──────────────────────────────────────────────────
 export const Colors = {
-  primary: '#F97316',           // orange
-  success: '#22C55E',           // green
-  info: '#3B82F6',              // blue
-  destructive: '#EF4444',       // red
-  warning: '#EAB308',           // yellow
-  background: '#1F2937',        // dark slate
-  cardFrom: '#283548',
-  cardTo: '#232f3e',
+  primary: '#F97316',
+  success: '#22C55E',
+  info: '#3B82F6',
+  destructive: '#EF4444',
+  warning: '#EAB308',
+  background: '#1F2937',
+  cardBg: '#283548',
+  cardFrom: '#283548',  // kept for backward compat during migration
+  cardTo: '#283548',    // flattened — no more gradient
   textPrimary: '#FFFFFF',
   textSecondary: 'rgba(255,255,255,0.45)',
-  textTertiary: 'rgba(255,255,255,0.4)',
-  border: 'rgba(255,255,255,0.08)',
+  textTertiary: 'rgba(255,255,255,0.35)',
+  border: 'rgba(255,255,255,0.04)',
+} as const;
+
+// ── Spacing tokens ───────────────────────────────────────────────────────
+export const Spacing = {
+  sectionGap: 24,
+  cardPadding: 22,
+  cardRadius: 18,
+  itemGap: 10,
+  buttonRadius: 14,
+  buttonHeight: 52,
+  tileRadius: 6,
+  tileGap: 3,
+} as const;
+
+// ── Shadow presets ───────────────────────────────────────────────────────
+export const Shadows = {
+  primaryGlow: {
+    shadowColor: '#F97316',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 16,
+    elevation: 6,
+  },
+  destructiveGlow: {
+    shadowColor: '#EF4444',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  cardShadow: {
+    shadowColor: 'rgba(0,0,0,0.25)',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
 } as const;
 
 // ── Legacy palette kept for useThemeColor / ThemedText / ThemedView ────────
-// The app is dark-only; both "light" and "dark" slots map to the same values
-// so existing themed components continue to work without modification.
 const legacyPalette = {
   text: '#FFFFFF',
   background: '#1F2937',
