@@ -10,6 +10,7 @@
 import { Button } from '@/components/ui/button';
 import { ProgressBar } from '@/components/ui/progress-bar';
 import { Text } from '@/components/ui/text';
+import VideoCard, { type VideoCardHandle } from '@/components/ui/video-card';
 import { Colors } from '@/constants/theme';
 import { getAssetsByIds } from '@/services/mediaLibrary';
 import { useSessionStore } from '@/store/session';
@@ -193,6 +194,7 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(function SwipeCard
   useImperativeHandle(ref, () => ({
     triggerSwipe(decision: Decision) {
       if (isAnimating.value) return;
+      videoCardRef.current?.stop();
       isAnimating.value = true;
 
       let targetX = 0;
@@ -217,6 +219,12 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(function SwipeCard
       }
     },
   }));
+
+  // Video stop ref — called before any swipe animation runs
+  const videoCardRef = useRef<VideoCardHandle>(null);
+  const stopVideoOnSwipe = useCallback(() => {
+    videoCardRef.current?.stop();
+  }, []);
 
   // Zoom
   const zoomScale = useSharedValue(1);
@@ -269,6 +277,7 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(function SwipeCard
 
       if (decision !== null) {
         isAnimating.value = true;
+        runOnJS(stopVideoOnSwipe)();
         const captured = decision;
 
         if (targetX !== 0) {
@@ -370,13 +379,19 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(function SwipeCard
   return (
     <GestureDetector gesture={composedGesture}>
       <Animated.View style={[styles.card, animatedStyle]}>
-        <Image
-          source={asset.localUri ?? asset.uri}
-          style={styles.cardImage}
-          contentFit="contain"
-        />
-
-        {asset.kind === 'video' && <VideoBadge />}
+        {asset.kind === 'video' ? (
+          <VideoCard
+            ref={videoCardRef}
+            uri={asset.uri}
+            isTopCard={stackIndex === 0}
+          />
+        ) : (
+          <Image
+            source={asset.localUri ?? asset.uri}
+            style={styles.cardImage}
+            contentFit="contain"
+          />
+        )}
 
         {/* Directional overlays (only visible on top card during drag) */}
         <Animated.View
@@ -418,18 +433,6 @@ const SwipeCard = forwardRef<SwipeCardHandle, SwipeCardProps>(function SwipeCard
     </GestureDetector>
   );
 });
-
-// ---------------------------------------------------------------------------
-// VideoBadge
-// ---------------------------------------------------------------------------
-
-function VideoBadge() {
-  return (
-    <View style={styles.videoBadge}>
-      <Text variant="label" style={styles.videoBadgeText}>▶</Text>
-    </View>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // SwipeScreen
@@ -949,23 +952,6 @@ const styles = StyleSheet.create({
   cardImage: {
     width: '100%',
     height: '100%',
-  },
-
-  // ── Video badge ───────────────────────────────────────────────────────────
-  videoBadge: {
-    position: 'absolute',
-    bottom: 12,
-    left: 12,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    borderRadius: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  videoBadgeText: {
-    fontSize: 12,
-    color: '#FFFFFF',
   },
 
   // ── Overlays ───────────────────────────────────────────────────────────────
