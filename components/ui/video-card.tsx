@@ -104,7 +104,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
     };
   }, [player]);
 
-  // Hide center button when playing starts
+  // Hide center button and progress bar when playing starts
   useEffect(() => {
     if (isPlaying) {
       setShowCenterButton(false);
@@ -120,16 +120,25 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
       clearTimeout(hideControlsTimerRef.current);
     }
     hideControlsTimerRef.current = setTimeout(() => {
-      if (!isScrubbingRef.current) {
+      if (!isScrubbingRef.current && isPlaying) {
+        setShowCenterButton(false);
         setShowBottomControls(false);
       }
     }, 3000);
-  }, []);
+  }, [isPlaying]);
 
   const showControlsTemporarily = useCallback(() => {
+    setShowCenterButton(true);
     setShowBottomControls(true);
     scheduleHideControls();
   }, [scheduleHideControls]);
+
+  // Tap on card area while playing — just reveal controls, don't pause
+  const revealControls = useCallback(() => {
+    if (isPlaying) {
+      showControlsTemporarily();
+    }
+  }, [isPlaying, showControlsTemporarily]);
 
   const togglePlayPause = useCallback(() => {
     if (isPlaying) {
@@ -138,9 +147,9 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
       setShowBottomControls(true);
     } else {
       player.play();
-      showControlsTemporarily();
+      scheduleHideControls();
     }
-  }, [isPlaying, player, showControlsTemporarily]);
+  }, [isPlaying, player, scheduleHideControls]);
 
   const toggleMute = useCallback(() => {
     const next = !isMuted;
@@ -148,13 +157,22 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
     player.muted = next;
   }, [isMuted, player]);
 
-  // RNGH Tap gestures — work reliably inside parent GestureDetector
+  // RNGH Tap gestures
   const playPauseTapGesture = useMemo(
     () =>
       Gesture.Tap().onEnd(() => {
         runOnJS(togglePlayPause)();
       }),
     [togglePlayPause],
+  );
+
+  // Tap on card area — just shows controls without pausing
+  const cardTapGesture = useMemo(
+    () =>
+      Gesture.Tap().onEnd(() => {
+        runOnJS(revealControls)();
+      }),
+    [revealControls],
   );
 
   const muteTapGesture = useMemo(
@@ -236,14 +254,14 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
         </GestureDetector>
       )}
 
-      {/* Invisible tap layer when center button is hidden */}
+      {/* Invisible tap layer when controls are hidden — reveals them without pausing */}
       {!showCenterButton && (
-        <GestureDetector gesture={playPauseTapGesture}>
+        <GestureDetector gesture={cardTapGesture}>
           <View style={StyleSheet.absoluteFill} />
         </GestureDetector>
       )}
 
-      {/* Bottom controls — scrub bar + mute */}
+      {/* Progress bar — shown temporarily or when paused */}
       {showBottomControls && (
         <View style={styles.bottomControls}>
           <GestureDetector gesture={scrubGesture}>
@@ -263,14 +281,15 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
               />
             </View>
           </GestureDetector>
-
-          <GestureDetector gesture={muteTapGesture}>
-            <View style={styles.muteButton}>
-              <Text style={styles.muteIcon}>{isMuted ? '🔇' : '🔊'}</Text>
-            </View>
-          </GestureDetector>
         </View>
       )}
+
+      {/* Mute button — always visible, bottom-right corner */}
+      <GestureDetector gesture={muteTapGesture}>
+        <View style={styles.muteButton}>
+          <Text style={styles.muteIcon}>{isMuted ? '🔇' : '🔊'}</Text>
+        </View>
+      </GestureDetector>
     </View>
   );
 });
@@ -311,11 +330,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     backgroundColor: 'rgba(0,0,0,0.45)',
-    gap: 10,
   },
   muteButton: {
-    width: 36,
-    height: 36,
+    position: 'absolute',
+    bottom: 12,
+    right: 12,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
   },
