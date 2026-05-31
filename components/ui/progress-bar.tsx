@@ -2,14 +2,21 @@ import { Colors } from '@/constants/theme';
 import { useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
 
 interface ProgressBarProps {
-  /** Value between 0 and 1 */
   progress: number;
   color?: string;
+  gradientColors?: [string, string];
+  height?: number;
 }
 
-export function ProgressBar({ progress, color = Colors.primary }: ProgressBarProps) {
+export function ProgressBar({
+  progress,
+  color = Colors.primary,
+  gradientColors,
+  height = 5,
+}: ProgressBarProps) {
   const clampedProgress = Math.min(1, Math.max(0, progress));
   const width = useSharedValue(clampedProgress);
 
@@ -22,21 +29,26 @@ export function ProgressBar({ progress, color = Colors.primary }: ProgressBarPro
   }));
 
   return (
-    <View style={styles.track}>
-      <Animated.View style={[styles.fill, { backgroundColor: color }, animatedStyle]} />
+    <View style={[styles.track, { height, borderRadius: height / 2 }]}>
+      <Animated.View style={[{ height, borderRadius: height / 2 }, animatedStyle]}>
+        {gradientColors ? (
+          <LinearGradient
+            colors={gradientColors}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={{ flex: 1, borderRadius: height / 2 }}
+          />
+        ) : (
+          <View style={{ flex: 1, backgroundColor: color, borderRadius: height / 2 }} />
+        )}
+      </Animated.View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   track: {
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(255,255,255,0.05)',
     overflow: 'hidden',
-  },
-  fill: {
-    height: '100%',
-    borderRadius: 2,
   },
 });
